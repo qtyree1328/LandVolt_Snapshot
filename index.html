@@ -896,6 +896,7 @@
     </div>
 
     <script>
+        let partialDataLoaded = false;
         const map = new maplibregl.Map({
             container: 'map',
             style: {
@@ -1085,61 +1086,62 @@
         // Data fetching
         async function fetchPaginated(baseUrl, statusPrefix, progressStart, progressEnd) {
             const pageSize = 2000;
-            let offset = 0,
-                features = [],
-                hasMore = true,
-                totalCount = 100000;
+            let offset = 0, features = [], hasMore = true, totalCount = 100000;
 
             try {
-                const countResp = await fetch(
-                    `${baseUrl}?where=1%3D1&returnCountOnly=true&f=json`
-                );
+                const countResp = await fetch(`${baseUrl}?where=1%3D1&returnCountOnly=true&f=json`);
                 const countData = await countResp.json();
                 if (countData.count) totalCount = countData.count;
-            } catch (e) {}
+            } catch (e) {
+                console.warn(`Could not get totalCount for ${statusPrefix}`, e);
+            }
 
-            while (hasMore) {
-                const url =
-                    `${baseUrl}?` +
-                    new URLSearchParams({
-                        where: '1=1',
-                        outFields: '*',
-                        returnGeometry: 'true',
-                        f: 'geojson',
-                        resultOffset: offset,
-                        resultRecordCount: pageSize
-                    });
+            while (hasMore && offset < totalCount) {
+                const url = `${baseUrl}?` + new URLSearchParams({
+                    where: '1=1',
+                    outFields: '*',
+                    returnGeometry: 'true',
+                    f: 'geojson',
+                    resultOffset: offset,
+                    resultRecordCount: pageSize
+                });
 
                 try {
                     const resp = await fetch(url);
                     const data = await resp.json();
-                    if (data.features && data.features.length > 0) {
-                        features = features.concat(data.features);
-                        offset += data.features.length;
+                    const n = (data.features && data.features.length) || 0;
 
-                        const progress =
-                            progressStart +
-                            (offset / totalCount) * (progressEnd - progressStart);
+                    if (n > 0) {
+                        features = features.concat(data.features);
+                        offset += n;
+
+                        const progress = progressStart + (offset / totalCount) * (progressEnd - progressStart);
                         document.getElementById('progress-bar').style.width =
                             `${Math.min(progress, progressEnd)}%`;
                         document.getElementById('loading-status').textContent =
-                            `${statusPrefix}: ${offset.toLocaleString()} features...`;
+                            `${statusPrefix}: ${offset.toLocaleString()}...`;
 
-                        if (data.features.length < pageSize) hasMore = false;
+                        if (offset >= totalCount) {
+                            hasMore = false;
+                        }
                     } else {
                         hasMore = false;
                     }
                 } catch (e) {
+                    console.error(`Page fetch failed for ${statusPrefix}`, e);
                     hasMore = false;
                 }
 
                 await new Promise(r => setTimeout(r, 30));
             }
 
-            return {
-                type: 'FeatureCollection',
-                features
-            };
+            // If we got fewer than the reported total, mark as partial
+            if (features.length < totalCount) {
+                partialDataLoaded = true;
+                console.warn(`WARNING: got ${features.length} of ${totalCount} for ${statusPrefix}`);
+            }
+
+            return { type: 'FeatureCollection', features };
         }
 
         function findFeaturesInBuffer(center, radius) {
@@ -1811,7 +1813,15 @@
                 document.getElementById('loading-status').textContent =
                     'Rendering map...';
                 document.getElementById('progress-bar').style.width = '100%';
+                if (partialDataLoaded) {
+                    document.getElementById('loading-status').textContent =
+                            'Warning: not all grid data could be loaded. Please reload the page to try again.';
+                        alert('Warning: Not all grid data could be loaded from the server. ' +
+                            'Some lines or stations may be missing. Please reload the page to try again.');
+                    }
 
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('stats').classList.add('visible');
                 // Sources
                 map.addSource('transmission-lines', {
                     type: 'geojson',
