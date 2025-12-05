@@ -211,6 +211,41 @@
         
         /* Geocode result marker */
         .geocode-marker { width: 24px; height: 24px; background: #00d4ff; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 0 20px rgba(0, 212, 255, 0.8); }
+        
+        /* Export buttons */
+        .export-section { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(0, 212, 255, 0.15); }
+        .export-section-title { font-size: 10px; color: #606878; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+        .export-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+        .export-btn {
+            flex: 1; min-width: 70px; padding: 8px 12px; border: 1px solid rgba(74, 222, 128, 0.3);
+            background: rgba(74, 222, 128, 0.1); border-radius: 6px; color: #4ade80;
+            font-family: 'Rajdhani', sans-serif; font-size: 11px; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; transition: all 0.2s;
+        }
+        .export-btn:hover { background: rgba(74, 222, 128, 0.2); box-shadow: 0 0 10px rgba(74, 222, 128, 0.3); }
+        .export-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .export-btn.csv { border-color: rgba(0, 212, 255, 0.3); background: rgba(0, 212, 255, 0.1); color: #00d4ff; }
+        .export-btn.csv:hover { background: rgba(0, 212, 255, 0.2); box-shadow: 0 0 10px rgba(0, 212, 255, 0.3); }
+        .export-btn.geojson { border-color: rgba(168, 85, 247, 0.3); background: rgba(168, 85, 247, 0.1); color: #a855f7; }
+        .export-btn.geojson:hover { background: rgba(168, 85, 247, 0.2); box-shadow: 0 0 10px rgba(168, 85, 247, 0.3); }
+        
+        .buffer-export { padding: 12px 20px; border-top: 1px solid rgba(0, 212, 255, 0.15); flex-shrink: 0; }
+        .buffer-export-title { font-size: 10px; color: #606878; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+        .buffer-export-buttons { display: flex; gap: 8px; }
+        .buffer-export-btn {
+            flex: 1; padding: 10px 12px; border: 1px solid rgba(74, 222, 128, 0.3);
+            background: rgba(74, 222, 128, 0.1); border-radius: 6px; color: #4ade80;
+            font-family: 'Rajdhani', sans-serif; font-size: 12px; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; transition: all 0.2s;
+        }
+        .buffer-export-btn:hover { background: rgba(74, 222, 128, 0.2); box-shadow: 0 0 10px rgba(74, 222, 128, 0.3); transform: translateY(-1px); }
+        .buffer-export-btn.csv { border-color: rgba(0, 212, 255, 0.3); background: rgba(0, 212, 255, 0.1); color: #00d4ff; }
+        .buffer-export-btn.csv:hover { background: rgba(0, 212, 255, 0.2); box-shadow: 0 0 10px rgba(0, 212, 255, 0.3); }
+        .buffer-export-btn.geojson { border-color: rgba(168, 85, 247, 0.3); background: rgba(168, 85, 247, 0.1); color: #a855f7; }
+        .buffer-export-btn.geojson:hover { background: rgba(168, 85, 247, 0.2); box-shadow: 0 0 10px rgba(168, 85, 247, 0.3); }
+        
+        .toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%) translateY(100px); background: linear-gradient(135deg, rgba(74, 222, 128, 0.95) 0%, rgba(34, 197, 94, 0.95) 100%); color: #000; padding: 12px 24px; border-radius: 8px; font-weight: 600; font-size: 14px; z-index: 3000; opacity: 0; transition: all 0.3s ease; box-shadow: 0 4px 20px rgba(74, 222, 128, 0.4); }
+        .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
     </style>
 </head>
 <body>
@@ -265,6 +300,13 @@
                 <span class="layer-count" id="pipelines-count">-</span>
             </div>
         </div>
+        <div class="export-section">
+            <div class="export-section-title">Export All Data</div>
+            <div class="export-buttons">
+                <button class="export-btn csv" id="export-all-csv">📊 CSV</button>
+                <button class="export-btn geojson" id="export-all-geojson">🗺️ GeoJSON</button>
+            </div>
+        </div>
     </div>
     
     <div class="legend panel">
@@ -306,7 +348,16 @@
             <div class="results-section" id="results-substations"></div>
             <div class="results-section" id="results-pipelines"></div>
         </div>
+        <div class="buffer-export">
+            <div class="buffer-export-title">Export Buffer Results</div>
+            <div class="buffer-export-buttons">
+                <button class="buffer-export-btn csv" id="export-buffer-csv">📊 CSV</button>
+                <button class="buffer-export-btn geojson" id="export-buffer-geojson">🗺️ GeoJSON</button>
+            </div>
+        </div>
     </div>
+    
+    <div class="toast" id="toast">Export complete!</div>
     
     <div class="stats-bar panel" id="stats">
         <div class="stat-item"><div class="stat-value" id="lineCount">—</div><div class="stat-label">Lines</div></div>
@@ -330,6 +381,7 @@
         let currentMarker = null, geocodeMarker = null;
         let currentBufferRadius = 2, lastClickedLngLat = null;
         let layerVisibility = { transmission: true, substations: true, pipelines: true };
+        let currentBufferResults = null; // Store current buffer results for export
 
         const glowColors = { 1: '#6366f1', 2: '#a855f7', 3: '#22d3ee', 4: '#4ade80', 5: '#facc15', 6: '#fb923c', 7: '#f472b6' };
 
@@ -517,6 +569,7 @@
         }
 
         function displayResults(results, coords) {
+            currentBufferResults = results; // Store for export
             document.getElementById('buffer-coords').textContent = `${coords[1].toFixed(4)}°, ${coords[0].toFixed(4)}°`;
             document.getElementById('buffer-radius-display').textContent = `${currentBufferRadius}-mile radius`;
             document.getElementById('line-count').textContent = results.lines.length;
@@ -588,10 +641,210 @@
             if (map.getSource('buffer')) map.removeSource('buffer');
             if (currentMarker) { currentMarker.remove(); currentMarker = null; }
             lastClickedLngLat = null;
+            currentBufferResults = null; // Clear stored results
             document.getElementById('buffer-panel').classList.remove('visible');
         }
 
         document.getElementById('close-buffer').addEventListener('click', clearBuffer);
+
+        // Toast notification
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+
+        // Download helper
+        function downloadFile(content, filename, type) {
+            const blob = new Blob([content], { type });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // Convert features to CSV
+        function featuresToCSV(features, type) {
+            if (!features || features.length === 0) return '';
+            
+            // Get all unique property keys
+            const allKeys = new Set();
+            features.forEach(f => {
+                if (f.properties) Object.keys(f.properties).forEach(k => allKeys.add(k));
+            });
+            
+            // Add geometry columns
+            const keys = ['latitude', 'longitude', ...Array.from(allKeys)];
+            
+            // Header row
+            let csv = keys.map(k => `"${k}"`).join(',') + '\n';
+            
+            // Data rows
+            features.forEach(f => {
+                let lat = '', lng = '';
+                if (f.geometry) {
+                    if (f.geometry.type === 'Point') {
+                        lng = f.geometry.coordinates[0];
+                        lat = f.geometry.coordinates[1];
+                    } else if (f.geometry.type === 'LineString' && f.geometry.coordinates.length > 0) {
+                        // Use midpoint for lines
+                        const mid = Math.floor(f.geometry.coordinates.length / 2);
+                        lng = f.geometry.coordinates[mid][0];
+                        lat = f.geometry.coordinates[mid][1];
+                    } else if (f.geometry.type === 'MultiLineString' && f.geometry.coordinates.length > 0) {
+                        const firstLine = f.geometry.coordinates[0];
+                        if (firstLine.length > 0) {
+                            const mid = Math.floor(firstLine.length / 2);
+                            lng = firstLine[mid][0];
+                            lat = firstLine[mid][1];
+                        }
+                    }
+                }
+                
+                const row = keys.map(k => {
+                    if (k === 'latitude') return lat;
+                    if (k === 'longitude') return lng;
+                    const val = f.properties ? f.properties[k] : '';
+                    if (val === null || val === undefined) return '';
+                    return `"${String(val).replace(/"/g, '""')}"`;
+                });
+                csv += row.join(',') + '\n';
+            });
+            
+            return csv;
+        }
+
+        // Export all data
+        document.getElementById('export-all-csv').addEventListener('click', () => {
+            const timestamp = new Date().toISOString().slice(0, 10);
+            let exported = 0;
+            
+            if (allTransmissionLines && allTransmissionLines.features.length > 0) {
+                const csv = featuresToCSV(allTransmissionLines.features, 'transmission');
+                downloadFile(csv, `transmission_lines_${timestamp}.csv`, 'text/csv');
+                exported += allTransmissionLines.features.length;
+            }
+            
+            if (allSubstations && allSubstations.features.length > 0) {
+                const csv = featuresToCSV(allSubstations.features, 'substations');
+                downloadFile(csv, `substations_${timestamp}.csv`, 'text/csv');
+                exported += allSubstations.features.length;
+            }
+            
+            if (allPipelines && allPipelines.features.length > 0) {
+                const csv = featuresToCSV(allPipelines.features, 'pipelines');
+                downloadFile(csv, `gas_pipelines_${timestamp}.csv`, 'text/csv');
+                exported += allPipelines.features.length;
+            }
+            
+            showToast(`Exported ${exported.toLocaleString()} features to CSV files`);
+        });
+
+        document.getElementById('export-all-geojson').addEventListener('click', () => {
+            const timestamp = new Date().toISOString().slice(0, 10);
+            
+            const combined = {
+                type: 'FeatureCollection',
+                features: [
+                    ...(allTransmissionLines ? allTransmissionLines.features.map(f => ({...f, properties: {...f.properties, _layer: 'transmission'}})) : []),
+                    ...(allSubstations ? allSubstations.features.map(f => ({...f, properties: {...f.properties, _layer: 'substation'}})) : []),
+                    ...(allPipelines ? allPipelines.features.map(f => ({...f, properties: {...f.properties, _layer: 'pipeline'}})) : [])
+                ],
+                metadata: {
+                    exported: new Date().toISOString(),
+                    source: 'US Energy Infrastructure Map',
+                    layers: ['transmission', 'substations', 'pipelines']
+                }
+            };
+            
+            downloadFile(JSON.stringify(combined, null, 2), `us_energy_infrastructure_${timestamp}.geojson`, 'application/geo+json');
+            showToast(`Exported ${combined.features.length.toLocaleString()} features to GeoJSON`);
+        });
+
+        // Export buffer results
+        document.getElementById('export-buffer-csv').addEventListener('click', () => {
+            if (!currentBufferResults) {
+                showToast('No buffer results to export');
+                return;
+            }
+            
+            const timestamp = new Date().toISOString().slice(0, 10);
+            const coords = lastClickedLngLat ? `${lastClickedLngLat.lat.toFixed(4)}_${lastClickedLngLat.lng.toFixed(4)}` : 'unknown';
+            let exported = 0;
+            
+            if (currentBufferResults.lines.length > 0) {
+                const csv = featuresToCSV(currentBufferResults.lines, 'transmission');
+                downloadFile(csv, `buffer_transmission_${coords}_${currentBufferRadius}mi_${timestamp}.csv`, 'text/csv');
+                exported += currentBufferResults.lines.length;
+            }
+            
+            if (currentBufferResults.substations.length > 0) {
+                const csv = featuresToCSV(currentBufferResults.substations, 'substations');
+                downloadFile(csv, `buffer_substations_${coords}_${currentBufferRadius}mi_${timestamp}.csv`, 'text/csv');
+                exported += currentBufferResults.substations.length;
+            }
+            
+            if (currentBufferResults.pipelines.length > 0) {
+                const csv = featuresToCSV(currentBufferResults.pipelines, 'pipelines');
+                downloadFile(csv, `buffer_pipelines_${coords}_${currentBufferRadius}mi_${timestamp}.csv`, 'text/csv');
+                exported += currentBufferResults.pipelines.length;
+            }
+            
+            if (exported === 0) {
+                showToast('No features in buffer to export');
+            } else {
+                showToast(`Exported ${exported.toLocaleString()} features from buffer to CSV`);
+            }
+        });
+
+        document.getElementById('export-buffer-geojson').addEventListener('click', () => {
+            if (!currentBufferResults) {
+                showToast('No buffer results to export');
+                return;
+            }
+            
+            const timestamp = new Date().toISOString().slice(0, 10);
+            const coords = lastClickedLngLat ? `${lastClickedLngLat.lat.toFixed(4)}_${lastClickedLngLat.lng.toFixed(4)}` : 'unknown';
+            
+            // Create buffer polygon for export
+            const bufferPolygon = lastClickedLngLat ? turf.circle([lastClickedLngLat.lng, lastClickedLngLat.lat], currentBufferRadius, { steps: 64, units: 'miles' }) : null;
+            
+            const combined = {
+                type: 'FeatureCollection',
+                features: [
+                    ...(bufferPolygon ? [{ ...bufferPolygon, properties: { _type: 'buffer_boundary', radius_miles: currentBufferRadius, center_lat: lastClickedLngLat.lat, center_lng: lastClickedLngLat.lng } }] : []),
+                    ...currentBufferResults.lines.map(f => ({...f, properties: {...f.properties, _layer: 'transmission'}})),
+                    ...currentBufferResults.substations.map(f => ({...f, properties: {...f.properties, _layer: 'substation'}})),
+                    ...currentBufferResults.pipelines.map(f => ({...f, properties: {...f.properties, _layer: 'pipeline'}}))
+                ],
+                metadata: {
+                    exported: new Date().toISOString(),
+                    source: 'US Energy Infrastructure Map - Buffer Analysis',
+                    buffer_center: lastClickedLngLat ? [lastClickedLngLat.lng, lastClickedLngLat.lat] : null,
+                    buffer_radius_miles: currentBufferRadius,
+                    feature_counts: {
+                        transmission_lines: currentBufferResults.lines.length,
+                        substations: currentBufferResults.substations.length,
+                        pipelines: currentBufferResults.pipelines.length
+                    }
+                }
+            };
+            
+            const totalFeatures = currentBufferResults.lines.length + currentBufferResults.substations.length + currentBufferResults.pipelines.length;
+            
+            if (totalFeatures === 0) {
+                showToast('No features in buffer to export');
+                return;
+            }
+            
+            downloadFile(JSON.stringify(combined, null, 2), `buffer_analysis_${coords}_${currentBufferRadius}mi_${timestamp}.geojson`, 'application/geo+json');
+            showToast(`Exported ${totalFeatures.toLocaleString()} features + buffer boundary to GeoJSON`);
+        });
 
         map.on('load', async () => {
             try {
@@ -697,3 +950,4 @@
     </script>
 </body>
 </html>
+
