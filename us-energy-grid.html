@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>U.S. Energy Infrastructure — Power Grid & Gas Pipelines</title>
+    <link href="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.css" rel="stylesheet" />
+    <script src="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Rajdhani', sans-serif; background: #050510; overflow: hidden; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+        
+        .panel {
+            background: linear-gradient(135deg, rgba(5, 5, 20, 0.95) 0%, rgba(10, 15, 30, 0.9) 100%);
+            border-radius: 12px; border: 1px solid rgba(0, 212, 255, 0.3);
+            box-shadow: 0 0 40px rgba(0, 180, 255, 0.15), inset 0 0 30px rgba(0, 100, 200, 0.05);
+            backdrop-filter: blur(10px); z-index: 1000;
+        }
+        .panel::before {
+            content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+            background: linear-gradient(90deg, transparent, rgba(0, 212, 255, 0.8), rgba(138, 43, 226, 0.8), transparent);
+            border-radius: 12px 12px 0 0;
+        }
+        
+        .title-panel { position: absolute; top: 20px; left: 20px; padding: 20px 24px; max-width: 360px; }
+        .title-panel h1 {
+            font-family: 'Orbitron', sans-serif; font-size: 22px; font-weight: 900; color: #00d4ff;
+            text-shadow: 0 0 10px rgba(0, 212, 255, 0.7), 0 0 30px rgba(0, 212, 255, 0.4);
+            margin-bottom: 8px; letter-spacing: 2px;
+        }
+        .title-panel .subtitle { font-size: 14px; color: #8892a0; line-height: 1.5; }
+        .title-panel .subtitle strong { color: #00d4ff; font-weight: 600; }
+        
+        /* Search Box */
+        .search-section { margin-top: 16px; }
+        .search-section label {
+            display: block; font-size: 11px; color: #00d4ff; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;
+        }
+        .search-container { display: flex; gap: 8px; }
+        .search-input {
+            flex: 1; background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(0, 212, 255, 0.3);
+            border-radius: 6px; padding: 10px 12px; color: #fff; font-family: 'Rajdhani', sans-serif;
+            font-size: 14px; outline: none; transition: all 0.2s;
+        }
+        .search-input:focus { border-color: #00d4ff; box-shadow: 0 0 10px rgba(0, 212, 255, 0.3); }
+        .search-input::placeholder { color: #606878; }
+        .search-btn {
+            background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%);
+            border: none; border-radius: 6px; padding: 10px 16px; color: #000;
+            font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 13px;
+            cursor: pointer; transition: all 0.2s; text-transform: uppercase; letter-spacing: 1px;
+        }
+        .search-btn:hover { transform: scale(1.05); box-shadow: 0 0 15px rgba(0, 212, 255, 0.5); }
+        .search-hint { font-size: 11px; color: #505868; margin-top: 6px; }
+        
+        /* Buffer Control */
+        .buffer-control { margin-top: 14px; padding: 12px; background: rgba(168, 85, 247, 0.1); border-radius: 8px; border: 1px solid rgba(168, 85, 247, 0.25); }
+        .buffer-control label { display: block; font-size: 11px; color: #a855f7; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+        .slider-container { display: flex; align-items: center; gap: 10px; }
+        .buffer-slider { flex: 1; -webkit-appearance: none; appearance: none; height: 5px; background: rgba(168, 85, 247, 0.2); border-radius: 3px; outline: none; }
+        .buffer-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; background: #a855f7; border-radius: 50%; cursor: pointer; box-shadow: 0 0 10px rgba(168, 85, 247, 0.5); }
+        .buffer-slider::-moz-range-thumb { width: 16px; height: 16px; background: #a855f7; border-radius: 50%; cursor: pointer; border: none; }
+        .buffer-value { font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: 700; color: #a855f7; min-width: 55px; text-align: right; }
+        
+        /* Layer Controls */
+        .layer-panel { position: absolute; top: 20px; left: 400px; padding: 16px 20px; min-width: 220px; }
+        .layer-panel h3 {
+            font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 700; color: #00d4ff;
+            text-transform: uppercase; letter-spacing: 2px; margin-bottom: 14px;
+            text-shadow: 0 0 8px rgba(0, 212, 255, 0.5);
+        }
+        .layer-group { margin-bottom: 12px; }
+        .layer-group-title { font-size: 10px; color: #606878; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+        .layer-toggle { display: flex; align-items: center; margin-bottom: 8px; cursor: pointer; }
+        .layer-toggle:last-child { margin-bottom: 0; }
+        .layer-checkbox {
+            width: 18px; height: 18px; border-radius: 4px; margin-right: 10px;
+            display: flex; align-items: center; justify-content: center;
+            transition: all 0.2s; border: 2px solid;
+        }
+        .layer-checkbox.checked { background: currentColor; }
+        .layer-checkbox.checked::after { content: '✓'; color: #000; font-size: 12px; font-weight: 700; }
+        .layer-checkbox.transmission { border-color: #22d3ee; color: #22d3ee; }
+        .layer-checkbox.substations { border-color: #ff6b6b; color: #ff6b6b; }
+        .layer-checkbox.pipelines { border-color: #fbbf24; color: #fbbf24; }
+        .layer-label { font-size: 13px; color: #a0a8b8; font-weight: 500; }
+        .layer-count { font-size: 11px; color: #606878; margin-left: auto; }
+        
+        /* Legend */
+        .legend { position: absolute; bottom: 40px; left: 20px; padding: 16px 20px; }
+        .legend h3 { font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: 700; color: #00d4ff; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 12px; }
+        .legend-section { margin-bottom: 12px; }
+        .legend-section:last-child { margin-bottom: 0; }
+        .legend-section-title { font-size: 9px; color: #606878; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+        .legend-item { display: flex; align-items: center; margin-bottom: 5px; font-size: 11px; color: #a0a8b8; }
+        .legend-item:last-child { margin-bottom: 0; }
+        .legend-color { width: 24px; height: 3px; border-radius: 2px; margin-right: 10px; }
+        .legend-dot { width: 10px; height: 10px; border-radius: 50%; margin-right: 10px; }
+        .legend-color.v1 { background: #6366f1; }
+        .legend-color.v2 { background: #a855f7; }
+        .legend-color.v3 { background: #22d3ee; }
+        .legend-color.v4 { background: #4ade80; }
+        .legend-color.v5 { background: #facc15; }
+        .legend-color.v6 { background: #fb923c; }
+        .legend-color.dc { background: #f472b6; }
+        .legend-dot.substation { background: #ff6b6b; }
+        .legend-color.pipeline { background: #fbbf24; }
+        
+        /* Buffer Results Panel */
+        .buffer-panel {
+            position: absolute; top: 20px; right: 20px; width: 380px; max-height: calc(100vh - 40px);
+            background: linear-gradient(135deg, rgba(5, 5, 20, 0.97) 0%, rgba(10, 15, 30, 0.95) 100%);
+            border-radius: 12px; border: 1px solid rgba(0, 212, 255, 0.3);
+            box-shadow: 0 0 40px rgba(0, 180, 255, 0.15); z-index: 1000; backdrop-filter: blur(10px);
+            display: none; flex-direction: column; overflow: hidden;
+        }
+        .buffer-panel.visible { display: flex; }
+        .buffer-panel::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, transparent, rgba(138, 43, 226, 0.8), rgba(0, 212, 255, 0.8), transparent); border-radius: 12px 12px 0 0; }
+        .buffer-header { padding: 16px 20px; border-bottom: 1px solid rgba(0, 212, 255, 0.15); flex-shrink: 0; }
+        .buffer-header h2 { font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: 700; color: #00d4ff; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; }
+        .close-btn { background: rgba(255, 100, 100, 0.2); border: 1px solid rgba(255, 100, 100, 0.3); color: #ff6b6b; width: 26px; height: 26px; border-radius: 6px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
+        .close-btn:hover { background: rgba(255, 100, 100, 0.3); }
+        .buffer-info { font-size: 12px; color: #8892a0; }
+        .buffer-info strong { color: #a855f7; }
+        .buffer-stats { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+        .buffer-stat { flex: 1; min-width: 100px; padding: 8px 10px; background: rgba(0, 212, 255, 0.1); border-radius: 6px; text-align: center; }
+        .buffer-stat.substations { background: rgba(255, 107, 107, 0.1); }
+        .buffer-stat.pipelines { background: rgba(251, 191, 36, 0.1); }
+        .buffer-stat-value { font-family: 'Orbitron', sans-serif; font-weight: 700; font-size: 18px; color: #00d4ff; }
+        .buffer-stat.substations .buffer-stat-value { color: #ff6b6b; }
+        .buffer-stat.pipelines .buffer-stat-value { color: #fbbf24; }
+        .buffer-stat-label { font-size: 10px; color: #606878; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+        
+        .buffer-tabs { display: flex; border-bottom: 1px solid rgba(0, 212, 255, 0.15); }
+        .buffer-tab { flex: 1; padding: 10px 8px; background: transparent; border: none; color: #606878; font-family: 'Rajdhani', sans-serif; font-size: 12px; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; }
+        .buffer-tab:hover { color: #a0a8b8; }
+        .buffer-tab.active { color: #00d4ff; border-bottom-color: #00d4ff; }
+        .buffer-tab.active.substations { color: #ff6b6b; border-bottom-color: #ff6b6b; }
+        .buffer-tab.active.pipelines { color: #fbbf24; border-bottom-color: #fbbf24; }
+        
+        .buffer-results { flex: 1; overflow-y: auto; padding: 12px; }
+        .buffer-results::-webkit-scrollbar { width: 5px; }
+        .buffer-results::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.2); border-radius: 3px; }
+        .buffer-results::-webkit-scrollbar-thumb { background: rgba(0, 212, 255, 0.3); border-radius: 3px; }
+        .results-section { display: none; }
+        .results-section.active { display: block; }
+        
+        .item-card { background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(0, 212, 255, 0.15); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; transition: all 0.2s; }
+        .item-card:hover { border-color: rgba(0, 212, 255, 0.4); }
+        .item-card.substation { border-color: rgba(255, 107, 107, 0.15); }
+        .item-card.substation:hover { border-color: rgba(255, 107, 107, 0.4); }
+        .item-card.pipeline { border-color: rgba(251, 191, 36, 0.15); }
+        .item-card.pipeline:hover { border-color: rgba(251, 191, 36, 0.4); }
+        
+        .item-title { font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 4px; display: inline-block; margin-bottom: 8px; }
+        .item-title.transmission { background: rgba(34, 211, 238, 0.2); color: #22d3ee; border: 1px solid rgba(34, 211, 238, 0.3); }
+        .item-title.substation { background: rgba(255, 107, 107, 0.2); color: #ff6b6b; border: 1px solid rgba(255, 107, 107, 0.3); }
+        .item-title.pipeline { background: rgba(251, 191, 36, 0.2); color: #fbbf24; border: 1px solid rgba(251, 191, 36, 0.3); }
+        .item-title.v1 { background: rgba(99, 102, 241, 0.2); color: #6366f1; border: 1px solid rgba(99, 102, 241, 0.3); }
+        .item-title.v2 { background: rgba(168, 85, 247, 0.2); color: #a855f7; border: 1px solid rgba(168, 85, 247, 0.3); }
+        .item-title.v3 { background: rgba(34, 211, 238, 0.2); color: #22d3ee; border: 1px solid rgba(34, 211, 238, 0.3); }
+        .item-title.v4 { background: rgba(74, 222, 128, 0.2); color: #4ade80; border: 1px solid rgba(74, 222, 128, 0.3); }
+        .item-title.v5 { background: rgba(250, 204, 21, 0.2); color: #facc15; border: 1px solid rgba(250, 204, 21, 0.3); }
+        .item-title.v6 { background: rgba(251, 146, 60, 0.2); color: #fb923c; border: 1px solid rgba(251, 146, 60, 0.3); }
+        .item-title.v7 { background: rgba(244, 114, 182, 0.2); color: #f472b6; border: 1px solid rgba(244, 114, 182, 0.3); }
+        
+        .item-detail { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05); font-size: 12px; }
+        .item-detail:last-child { border-bottom: none; }
+        .item-label { color: #606878; }
+        .item-value { color: #c0c8d8; font-weight: 600; text-align: right; max-width: 180px; word-wrap: break-word; }
+        
+        .no-results { text-align: center; padding: 30px 16px; color: #606878; font-size: 13px; }
+        .no-results .icon { font-size: 36px; margin-bottom: 12px; opacity: 0.5; }
+        
+        /* Loading */
+        .loading-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #050510; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 2000; transition: opacity 0.5s, visibility 0.5s; }
+        .loading-overlay.hidden { opacity: 0; visibility: hidden; }
+        .loading-spinner { width: 70px; height: 70px; border: 3px solid rgba(0, 212, 255, 0.1); border-top-color: #00d4ff; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-text { font-family: 'Orbitron', sans-serif; color: #00d4ff; margin-top: 20px; font-size: 13px; letter-spacing: 3px; text-transform: uppercase; }
+        .loading-subtext { color: #505868; margin-top: 6px; font-size: 11px; text-align: center; max-width: 280px; }
+        .loading-progress { width: 180px; height: 4px; background: rgba(0, 212, 255, 0.1); border-radius: 2px; margin-top: 14px; overflow: hidden; }
+        .loading-progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #6366f1, #00d4ff); border-radius: 2px; transition: width 0.3s; }
+        
+        /* Stats bar */
+        .stats-bar { position: absolute; bottom: 40px; right: 20px; padding: 14px 20px; display: flex; align-items: center; gap: 20px; opacity: 0; transform: translateY(20px); transition: all 0.3s; }
+        .stats-bar.visible { opacity: 1; transform: translateY(0); }
+        .stat-item { text-align: center; }
+        .stat-value { font-family: 'Orbitron', sans-serif; font-size: 18px; font-weight: 700; color: #00d4ff; }
+        .stat-value.substations { color: #ff6b6b; }
+        .stat-value.pipelines { color: #fbbf24; }
+        .stat-label { font-size: 10px; color: #606878; text-transform: uppercase; letter-spacing: 1px; margin-top: 2px; }
+        
+        /* Popups */
+        .maplibregl-popup-content { background: linear-gradient(135deg, rgba(10, 10, 30, 0.98) 0%, rgba(20, 25, 45, 0.95) 100%); border: 1px solid rgba(0, 212, 255, 0.3); border-radius: 10px; padding: 0; box-shadow: 0 0 30px rgba(0, 180, 255, 0.2); }
+        .maplibregl-popup-tip { border-top-color: rgba(10, 10, 30, 0.98); }
+        .popup-content { padding: 14px 16px; }
+        .popup-title { font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: 700; color: #00d4ff; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(0, 212, 255, 0.2); }
+        .popup-row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 12px; }
+        .popup-row:last-child { margin-bottom: 0; }
+        .popup-label { color: #606878; }
+        .popup-value { color: #c0c8d8; font-weight: 600; }
+        
+        .buffer-marker { width: 18px; height: 18px; background: radial-gradient(circle, #a855f7 0%, transparent 70%); border: 2px solid #a855f7; border-radius: 50%; box-shadow: 0 0 20px rgba(168, 85, 247, 0.6); }
+        
+        /* Geocode result marker */
+        .geocode-marker { width: 24px; height: 24px; background: #00d4ff; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 0 20px rgba(0, 212, 255, 0.8); }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <div class="loading-overlay" id="loading">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Initializing Grid</div>
+        <div class="loading-subtext" id="loading-status">Connecting to HIFLD database...</div>
+        <div class="loading-progress"><div class="loading-progress-bar" id="progress-bar"></div></div>
+    </div>
+    
+    <div class="title-panel panel">
+        <h1>U.S. ENERGY GRID</h1>
+        <p class="subtitle">Visualization of <strong>transmission lines</strong>, <strong>substations</strong>, and <strong>gas pipelines</strong>.</p>
+        
+        <div class="search-section">
+            <label>📍 Search Location</label>
+            <div class="search-container">
+                <input type="text" class="search-input" id="search-input" placeholder="Address or coordinates (lat, lng)">
+                <button class="search-btn" id="search-btn">Go</button>
+            </div>
+            <div class="search-hint">Enter address, city, or coordinates like "40.7128, -74.0060"</div>
+        </div>
+        
+        <div class="buffer-control">
+            <label>Buffer Radius</label>
+            <div class="slider-container">
+                <input type="range" class="buffer-slider" id="buffer-slider" min="0.5" max="20" step="0.5" value="2">
+                <span class="buffer-value" id="buffer-value">2 mi</span>
+            </div>
+        </div>
+    </div>
+    
+    <div class="layer-panel panel">
+        <h3>Layers</h3>
+        <div class="layer-group">
+            <div class="layer-group-title">Infrastructure</div>
+            <div class="layer-toggle" data-layer="transmission">
+                <div class="layer-checkbox transmission checked"></div>
+                <span class="layer-label">Transmission Lines</span>
+                <span class="layer-count" id="transmission-count">-</span>
+            </div>
+            <div class="layer-toggle" data-layer="substations">
+                <div class="layer-checkbox substations checked"></div>
+                <span class="layer-label">Substations</span>
+                <span class="layer-count" id="substations-count">-</span>
+            </div>
+            <div class="layer-toggle" data-layer="pipelines">
+                <div class="layer-checkbox pipelines checked"></div>
+                <span class="layer-label">Gas Pipelines</span>
+                <span class="layer-count" id="pipelines-count">-</span>
+            </div>
+        </div>
+    </div>
+    
+    <div class="legend panel">
+        <h3>Legend</h3>
+        <div class="legend-section">
+            <div class="legend-section-title">Transmission (Voltage)</div>
+            <div class="legend-item"><div class="legend-color v1"></div><span>&lt;100 kV</span></div>
+            <div class="legend-item"><div class="legend-color v2"></div><span>100-161 kV</span></div>
+            <div class="legend-item"><div class="legend-color v3"></div><span>220-287 kV</span></div>
+            <div class="legend-item"><div class="legend-color v4"></div><span>345 kV</span></div>
+            <div class="legend-item"><div class="legend-color v5"></div><span>500 kV</span></div>
+            <div class="legend-item"><div class="legend-color v6"></div><span>735+ kV</span></div>
+            <div class="legend-item"><div class="legend-color dc"></div><span>DC</span></div>
+        </div>
+        <div class="legend-section">
+            <div class="legend-section-title">Other</div>
+            <div class="legend-item"><div class="legend-dot substation"></div><span>Substations</span></div>
+            <div class="legend-item"><div class="legend-color pipeline"></div><span>Gas Pipelines</span></div>
+        </div>
+    </div>
+    
+    <div class="buffer-panel" id="buffer-panel">
+        <div class="buffer-header">
+            <h2><span>🎯 Buffer Analysis</span><button class="close-btn" id="close-buffer">×</button></h2>
+            <div class="buffer-info"><strong id="buffer-radius-display">2-mile radius</strong> at <span id="buffer-coords">--</span></div>
+            <div class="buffer-stats">
+                <div class="buffer-stat"><div class="buffer-stat-value" id="line-count">0</div><div class="buffer-stat-label">Lines</div></div>
+                <div class="buffer-stat substations"><div class="buffer-stat-value" id="substation-count">0</div><div class="buffer-stat-label">Substations</div></div>
+                <div class="buffer-stat pipelines"><div class="buffer-stat-value" id="pipeline-count">0</div><div class="buffer-stat-label">Pipelines</div></div>
+            </div>
+        </div>
+        <div class="buffer-tabs">
+            <button class="buffer-tab active" data-tab="lines">⚡ Lines</button>
+            <button class="buffer-tab substations" data-tab="substations">🔌 Substations</button>
+            <button class="buffer-tab pipelines" data-tab="pipelines">🔥 Pipelines</button>
+        </div>
+        <div class="buffer-results" id="buffer-results">
+            <div class="results-section active" id="results-lines"></div>
+            <div class="results-section" id="results-substations"></div>
+            <div class="results-section" id="results-pipelines"></div>
+        </div>
+    </div>
+    
+    <div class="stats-bar panel" id="stats">
+        <div class="stat-item"><div class="stat-value" id="lineCount">—</div><div class="stat-label">Lines</div></div>
+        <div class="stat-item"><div class="stat-value substations" id="substationCount">—</div><div class="stat-label">Substations</div></div>
+        <div class="stat-item"><div class="stat-value pipelines" id="pipelineCount">—</div><div class="stat-label">Pipelines</div></div>
+    </div>
+
+    <script>
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: {
+                version: 8,
+                sources: { 'carto-dark': { type: 'raster', tiles: ['https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png'], tileSize: 256 } },
+                layers: [{ id: 'carto-dark-layer', type: 'raster', source: 'carto-dark', minzoom: 0, maxzoom: 20 }]
+            },
+            center: [-98.5, 39.5], zoom: 4, minZoom: 3, maxZoom: 18
+        });
+        map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+        let allTransmissionLines = null, allSubstations = null, allPipelines = null;
+        let currentMarker = null, geocodeMarker = null;
+        let currentBufferRadius = 2, lastClickedLngLat = null;
+        let layerVisibility = { transmission: true, substations: true, pipelines: true };
+
+        const glowColors = { 1: '#6366f1', 2: '#a855f7', 3: '#22d3ee', 4: '#4ade80', 5: '#facc15', 6: '#fb923c', 7: '#f472b6' };
+
+        function getVoltageRank(vc) {
+            if (!vc) return 1;
+            const v = String(vc).toUpperCase();
+            if (v.includes('DC')) return 7;
+            if (v.includes('735') || v.includes('765') || v.includes('1000')) return 6;
+            if (v.includes('500')) return 5;
+            if (v.includes('345')) return 4;
+            if (v.includes('220') || v.includes('230') || v.includes('287')) return 3;
+            if (v.includes('100') || v.includes('115') || v.includes('138') || v.includes('161')) return 2;
+            return 1;
+        }
+
+        function getVoltageCategory(vc) {
+            if (!vc) return 'Unknown';
+            const v = String(vc).toUpperCase();
+            if (v.includes('DC')) return 'DC';
+            if (v.includes('735') || v.includes('765') || v.includes('1000')) return '735+ kV';
+            if (v.includes('500')) return '500 kV';
+            if (v.includes('345')) return '345 kV';
+            if (v.includes('220') || v.includes('230') || v.includes('287')) return '220-287 kV';
+            if (v.includes('100') || v.includes('115') || v.includes('138') || v.includes('161')) return '100-161 kV';
+            return '<100 kV';
+        }
+
+        // Slider
+        const slider = document.getElementById('buffer-slider');
+        slider.addEventListener('input', e => {
+            currentBufferRadius = parseFloat(e.target.value);
+            document.getElementById('buffer-value').textContent = `${currentBufferRadius} mi`;
+            if (lastClickedLngLat) updateBuffer(lastClickedLngLat);
+        });
+
+        // Tabs
+        document.querySelectorAll('.buffer-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.buffer-tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.results-section').forEach(s => s.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById(`results-${tab.dataset.tab}`).classList.add('active');
+            });
+        });
+
+        // Layer toggles
+        document.querySelectorAll('.layer-toggle').forEach(toggle => {
+            toggle.addEventListener('click', () => {
+                const layer = toggle.dataset.layer;
+                const checkbox = toggle.querySelector('.layer-checkbox');
+                checkbox.classList.toggle('checked');
+                layerVisibility[layer] = checkbox.classList.contains('checked');
+                updateLayerVisibility();
+            });
+        });
+
+        function updateLayerVisibility() {
+            const transLayers = ['transmission-glow', 'transmission-core'];
+            const subLayers = ['substations-glow', 'substations-core'];
+            const pipeLayers = ['pipelines-glow', 'pipelines-core'];
+            
+            transLayers.forEach(l => { if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', layerVisibility.transmission ? 'visible' : 'none'); });
+            subLayers.forEach(l => { if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', layerVisibility.substations ? 'visible' : 'none'); });
+            pipeLayers.forEach(l => { if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', layerVisibility.pipelines ? 'visible' : 'none'); });
+        }
+
+        // Search / Geocoding
+        document.getElementById('search-btn').addEventListener('click', doSearch);
+        document.getElementById('search-input').addEventListener('keypress', e => { if (e.key === 'Enter') doSearch(); });
+
+        async function doSearch() {
+            const query = document.getElementById('search-input').value.trim();
+            if (!query) return;
+
+            // Check if coordinates
+            const coordMatch = query.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
+            if (coordMatch) {
+                const lat = parseFloat(coordMatch[1]);
+                const lng = parseFloat(coordMatch[2]);
+                if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+                    goToLocation(lng, lat, query);
+                    return;
+                }
+            }
+
+            // Geocode using Nominatim
+            try {
+                const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1&countrycodes=us`);
+                const data = await response.json();
+                if (data.length > 0) {
+                    const result = data[0];
+                    goToLocation(parseFloat(result.lon), parseFloat(result.lat), result.display_name);
+                } else {
+                    alert('Location not found. Try a different search term.');
+                }
+            } catch (e) {
+                alert('Error searching for location.');
+            }
+        }
+
+        function goToLocation(lng, lat, name) {
+            if (geocodeMarker) geocodeMarker.remove();
+            
+            const el = document.createElement('div');
+            el.className = 'geocode-marker';
+            geocodeMarker = new maplibregl.Marker(el).setLngLat([lng, lat]).addTo(map);
+            
+            map.flyTo({ center: [lng, lat], zoom: 12 });
+            
+            lastClickedLngLat = { lng, lat };
+            setTimeout(() => updateBuffer({ lng, lat }), 500);
+        }
+
+        // Data fetching
+        async function fetchPaginated(baseUrl, statusPrefix, progressStart, progressEnd) {
+            const pageSize = 2000;
+            let offset = 0, features = [], hasMore = true, totalCount = 100000;
+            
+            try {
+                const countResp = await fetch(`${baseUrl}?where=1%3D1&returnCountOnly=true&f=json`);
+                const countData = await countResp.json();
+                if (countData.count) totalCount = countData.count;
+            } catch (e) {}
+            
+            while (hasMore) {
+                const url = `${baseUrl}?` + new URLSearchParams({ where: '1=1', outFields: '*', returnGeometry: 'true', f: 'geojson', resultOffset: offset, resultRecordCount: pageSize });
+                try {
+                    const resp = await fetch(url);
+                    const data = await resp.json();
+                    if (data.features && data.features.length > 0) {
+                        features = features.concat(data.features);
+                        offset += data.features.length;
+                        const progress = progressStart + (offset / totalCount) * (progressEnd - progressStart);
+                        document.getElementById('progress-bar').style.width = `${Math.min(progress, progressEnd)}%`;
+                        document.getElementById('loading-status').textContent = `${statusPrefix}: ${offset.toLocaleString()}...`;
+                        if (data.features.length < pageSize) hasMore = false;
+                    } else hasMore = false;
+                } catch (e) { hasMore = false; }
+                await new Promise(r => setTimeout(r, 30));
+            }
+            return { type: 'FeatureCollection', features };
+        }
+
+        function findFeaturesInBuffer(center, radius) {
+            const buffer = turf.circle(center, radius, { steps: 64, units: 'miles' });
+            const results = { lines: [], substations: [], pipelines: [] };
+            
+            if (allTransmissionLines) {
+                for (const f of allTransmissionLines.features) {
+                    try { if (turf.booleanIntersects(f, buffer)) results.lines.push(f); } catch (e) {}
+                }
+            }
+            if (allSubstations) {
+                for (const f of allSubstations.features) {
+                    try { if (turf.booleanPointInPolygon(f, buffer)) results.substations.push(f); } catch (e) {}
+                }
+            }
+            if (allPipelines) {
+                for (const f of allPipelines.features) {
+                    try { if (turf.booleanIntersects(f, buffer)) results.pipelines.push(f); } catch (e) {}
+                }
+            }
+            return results;
+        }
+
+        function updateBuffer(lngLat) {
+            const center = [lngLat.lng, lngLat.lat];
+            const buffer = turf.circle(center, currentBufferRadius, { steps: 64, units: 'miles' });
+            
+            if (map.getSource('buffer')) {
+                map.getSource('buffer').setData(buffer);
+            } else {
+                map.addSource('buffer', { type: 'geojson', data: buffer });
+                map.addLayer({ id: 'buffer-fill', type: 'fill', source: 'buffer', paint: { 'fill-color': '#a855f7', 'fill-opacity': 0.15 } }, 'transmission-glow');
+                map.addLayer({ id: 'buffer-outline', type: 'line', source: 'buffer', paint: { 'line-color': '#a855f7', 'line-width': 2, 'line-dasharray': [3, 2] } }, 'transmission-glow');
+            }
+            
+            if (!currentMarker) {
+                const el = document.createElement('div');
+                el.className = 'buffer-marker';
+                currentMarker = new maplibregl.Marker(el).setLngLat(lngLat).addTo(map);
+            } else currentMarker.setLngLat(lngLat);
+            
+            displayResults(findFeaturesInBuffer(center, currentBufferRadius), center);
+        }
+
+        function displayResults(results, coords) {
+            document.getElementById('buffer-coords').textContent = `${coords[1].toFixed(4)}°, ${coords[0].toFixed(4)}°`;
+            document.getElementById('buffer-radius-display').textContent = `${currentBufferRadius}-mile radius`;
+            document.getElementById('line-count').textContent = results.lines.length;
+            document.getElementById('substation-count').textContent = results.substations.length;
+            document.getElementById('pipeline-count').textContent = results.pipelines.length;
+            
+            const linesEl = document.getElementById('results-lines');
+            const subsEl = document.getElementById('results-substations');
+            const pipesEl = document.getElementById('results-pipelines');
+            
+            linesEl.innerHTML = '';
+            subsEl.innerHTML = '';
+            pipesEl.innerHTML = '';
+            
+            if (results.lines.length === 0) {
+                linesEl.innerHTML = '<div class="no-results"><div class="icon">⚡</div><p>No transmission lines found.</p></div>';
+            } else {
+                results.lines.sort((a, b) => getVoltageRank(b.properties.VOLT_CLASS) - getVoltageRank(a.properties.VOLT_CLASS));
+                results.lines.forEach(f => {
+                    const p = f.properties;
+                    const vr = getVoltageRank(p.VOLT_CLASS);
+                    linesEl.innerHTML += `<div class="item-card"><div class="item-title v${vr}">${getVoltageCategory(p.VOLT_CLASS)}</div>
+                        <div class="item-detail"><span class="item-label">Type</span><span class="item-value">${p.TYPE || 'N/A'}</span></div>
+                        <div class="item-detail"><span class="item-label">Status</span><span class="item-value">${p.STATUS || 'N/A'}</span></div>
+                        <div class="item-detail"><span class="item-label">Owner</span><span class="item-value">${p.OWNER || 'N/A'}</span></div>
+                        <div class="item-detail"><span class="item-label">Operator</span><span class="item-value">${p.OPERATOR || 'N/A'}</span></div>
+                        <div class="item-detail"><span class="item-label">Voltage</span><span class="item-value">${p.VOLTAGE || p.VOLT_CLASS || 'N/A'}</span></div>
+                        <div class="item-detail"><span class="item-label">Sub 1</span><span class="item-value">${p.SUB_1 || 'N/A'}</span></div>
+                        <div class="item-detail"><span class="item-label">Sub 2</span><span class="item-value">${p.SUB_2 || 'N/A'}</span></div></div>`;
+                });
+            }
+            
+            if (results.substations.length === 0) {
+                subsEl.innerHTML = '<div class="no-results"><div class="icon">🔌</div><p>No substations found.</p></div>';
+            } else {
+                results.substations.forEach(f => {
+                    const p = f.properties;
+                    subsEl.innerHTML += `<div class="item-card substation"><div class="item-title substation">${p.NAME || 'Substation'}</div>
+                        <div class="item-detail"><span class="item-label">Type</span><span class="item-value">${p.TYPE || 'N/A'}</span></div>
+                        <div class="item-detail"><span class="item-label">Status</span><span class="item-value">${p.STATUS || 'N/A'}</span></div>
+                        <div class="item-detail"><span class="item-label">Owner</span><span class="item-value">${p.OWNER || 'N/A'}</span></div>
+                        <div class="item-detail"><span class="item-label">Voltage</span><span class="item-value">${p.MAX_VOLT || p.VOLTAGE || 'N/A'}</span></div>
+                        <div class="item-detail"><span class="item-label">City</span><span class="item-value">${p.CITY || 'N/A'}</span></div>
+                        <div class="item-detail"><span class="item-label">State</span><span class="item-value">${p.STATE || 'N/A'}</span></div>
+                        <div class="item-detail"><span class="item-label">County</span><span class="item-value">${p.COUNTY || 'N/A'}</span></div></div>`;
+                });
+            }
+            
+            if (results.pipelines.length === 0) {
+                pipesEl.innerHTML = '<div class="no-results"><div class="icon">🔥</div><p>No gas pipelines found.</p></div>';
+            } else {
+                results.pipelines.forEach(f => {
+                    const p = f.properties;
+                    pipesEl.innerHTML += `<div class="item-card pipeline"><div class="item-title pipeline">${p.Pipename || p.PIPENAME || 'Gas Pipeline'}</div>
+                        <div class="item-detail"><span class="item-label">Operator</span><span class="item-value">${p.Operator || p.OPERATOR || 'N/A'}</span></div>
+                        <div class="item-detail"><span class="item-label">Owner</span><span class="item-value">${p.Owner || p.OWNER || 'N/A'}</span></div>
+                        <div class="item-detail"><span class="item-label">Type</span><span class="item-value">${p.Typepipe || p.TYPE || 'N/A'}</span></div>
+                        <div class="item-detail"><span class="item-label">Status</span><span class="item-value">${p.Status || p.STATUS || 'N/A'}</span></div>
+                        <div class="item-detail"><span class="item-label">Diameter</span><span class="item-value">${p.Diameter || 'N/A'}</span></div>
+                        <div class="item-detail"><span class="item-label">Interstate</span><span class="item-value">${p.Interstate || 'N/A'}</span></div></div>`;
+                });
+            }
+            
+            document.getElementById('buffer-panel').classList.add('visible');
+        }
+
+        function clearBuffer() {
+            ['buffer-fill', 'buffer-outline'].forEach(l => { if (map.getLayer(l)) map.removeLayer(l); });
+            if (map.getSource('buffer')) map.removeSource('buffer');
+            if (currentMarker) { currentMarker.remove(); currentMarker = null; }
+            lastClickedLngLat = null;
+            document.getElementById('buffer-panel').classList.remove('visible');
+        }
+
+        document.getElementById('close-buffer').addEventListener('click', clearBuffer);
+
+        map.on('load', async () => {
+            try {
+                // Transmission lines
+                allTransmissionLines = await fetchPaginated(
+                    'https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/US_Electric_Power_Transmission_Lines/FeatureServer/0/query',
+                    'Transmission lines', 0, 40
+                );
+                allTransmissionLines.features.forEach(f => {
+                    if (f.properties) {
+                        f.properties.voltage_rank = getVoltageRank(f.properties.VOLT_CLASS);
+                        f.properties.voltage_category = getVoltageCategory(f.properties.VOLT_CLASS);
+                    }
+                });
+                document.getElementById('lineCount').textContent = allTransmissionLines.features.length.toLocaleString();
+                document.getElementById('transmission-count').textContent = allTransmissionLines.features.length.toLocaleString();
+
+                // Substations
+                allSubstations = await fetchPaginated(
+                    'https://services6.arcgis.com/OO2s4OoyCZkYJ6oE/arcgis/rest/services/Substations/FeatureServer/0/query',
+                    'Substations', 40, 70
+                );
+                document.getElementById('substationCount').textContent = allSubstations.features.length.toLocaleString();
+                document.getElementById('substations-count').textContent = allSubstations.features.length.toLocaleString();
+
+                // Gas pipelines
+                allPipelines = await fetchPaginated(
+                    'https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/Natural_Gas_Interstate_and_Intrastate_Pipelines_1/FeatureServer/0/query',
+                    'Gas pipelines', 70, 100
+                );
+                document.getElementById('pipelineCount').textContent = allPipelines.features.length.toLocaleString();
+                document.getElementById('pipelines-count').textContent = allPipelines.features.length.toLocaleString();
+
+                document.getElementById('loading-status').textContent = 'Rendering map...';
+                document.getElementById('progress-bar').style.width = '100%';
+
+                // Add sources
+                map.addSource('transmission-lines', { type: 'geojson', data: allTransmissionLines });
+                map.addSource('substations', { type: 'geojson', data: allSubstations });
+                map.addSource('pipelines', { type: 'geojson', data: allPipelines });
+
+                // Transmission layers
+                map.addLayer({ id: 'transmission-glow', type: 'line', source: 'transmission-lines', layout: { 'line-join': 'round', 'line-cap': 'round' },
+                    paint: { 'line-color': ['match', ['get', 'voltage_rank'], 1, glowColors[1], 2, glowColors[2], 3, glowColors[3], 4, glowColors[4], 5, glowColors[5], 6, glowColors[6], 7, glowColors[7], glowColors[1]], 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 2, 6, 6, 10, 14], 'line-blur': ['interpolate', ['linear'], ['zoom'], 3, 1, 6, 3, 10, 6], 'line-opacity': ['interpolate', ['linear'], ['zoom'], 3, 0.2, 5, 0.3, 7, 0.4] }
+                });
+                map.addLayer({ id: 'transmission-core', type: 'line', source: 'transmission-lines', layout: { 'line-join': 'round', 'line-cap': 'round' },
+                    paint: { 'line-color': ['match', ['get', 'voltage_rank'], 1, glowColors[1], 2, glowColors[2], 3, glowColors[3], 4, glowColors[4], 5, glowColors[5], 6, glowColors[6], 7, glowColors[7], glowColors[1]], 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.5, 6, 1.5, 10, 4], 'line-opacity': 0.9 }
+                });
+
+                // Pipeline layers
+                map.addLayer({ id: 'pipelines-glow', type: 'line', source: 'pipelines', layout: { 'line-join': 'round', 'line-cap': 'round' },
+                    paint: { 'line-color': '#fbbf24', 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 2, 6, 5, 10, 12], 'line-blur': ['interpolate', ['linear'], ['zoom'], 3, 1, 6, 2, 10, 5], 'line-opacity': 0.3 }
+                });
+                map.addLayer({ id: 'pipelines-core', type: 'line', source: 'pipelines', layout: { 'line-join': 'round', 'line-cap': 'round' },
+                    paint: { 'line-color': '#fbbf24', 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.4, 6, 1.2, 10, 3], 'line-opacity': 0.85 }
+                });
+
+                // Substation layers
+                map.addLayer({ id: 'substations-glow', type: 'circle', source: 'substations',
+                    paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 4, 8, 10, 12, 18], 'circle-color': '#ff6b6b', 'circle-blur': 1, 'circle-opacity': 0.4 }
+                });
+                map.addLayer({ id: 'substations-core', type: 'circle', source: 'substations',
+                    paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 2, 8, 4, 12, 7], 'circle-color': '#ff6b6b', 'circle-stroke-color': '#fff', 'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 3, 0, 8, 1, 12, 2], 'circle-opacity': 0.9 }
+                });
+
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('stats').classList.add('visible');
+
+                // Click handler
+                map.on('click', e => {
+                    const lineF = map.queryRenderedFeatures(e.point, { layers: ['transmission-core'] });
+                    const subF = map.queryRenderedFeatures(e.point, { layers: ['substations-core'] });
+                    const pipeF = map.queryRenderedFeatures(e.point, { layers: ['pipelines-core'] });
+                    
+                    if (lineF.length > 0) {
+                        const p = lineF[0].properties;
+                        new maplibregl.Popup().setLngLat(e.lngLat).setHTML(`<div class="popup-content"><div class="popup-title" style="color:#22d3ee">${p.voltage_category || getVoltageCategory(p.VOLT_CLASS)}</div><div class="popup-row"><span class="popup-label">Type</span><span class="popup-value">${p.TYPE||'N/A'}</span></div><div class="popup-row"><span class="popup-label">Owner</span><span class="popup-value">${p.OWNER||'N/A'}</span></div><div class="popup-row"><span class="popup-label">Status</span><span class="popup-value">${p.STATUS||'N/A'}</span></div></div>`).addTo(map);
+                    } else if (pipeF.length > 0) {
+                        const p = pipeF[0].properties;
+                        new maplibregl.Popup().setLngLat(e.lngLat).setHTML(`<div class="popup-content"><div class="popup-title" style="color:#fbbf24">${p.Pipename||p.PIPENAME||'Gas Pipeline'}</div><div class="popup-row"><span class="popup-label">Operator</span><span class="popup-value">${p.Operator||p.OPERATOR||'N/A'}</span></div><div class="popup-row"><span class="popup-label">Type</span><span class="popup-value">${p.Typepipe||p.TYPE||'N/A'}</span></div><div class="popup-row"><span class="popup-label">Diameter</span><span class="popup-value">${p.Diameter||'N/A'}</span></div></div>`).addTo(map);
+                    } else if (subF.length > 0) {
+                        const p = subF[0].properties;
+                        new maplibregl.Popup().setLngLat(e.lngLat).setHTML(`<div class="popup-content"><div class="popup-title" style="color:#ff6b6b">${p.NAME||'Substation'}</div><div class="popup-row"><span class="popup-label">Owner</span><span class="popup-value">${p.OWNER||'N/A'}</span></div><div class="popup-row"><span class="popup-label">City</span><span class="popup-value">${p.CITY||'N/A'}</span></div><div class="popup-row"><span class="popup-label">State</span><span class="popup-value">${p.STATE||'N/A'}</span></div></div>`).addTo(map);
+                    } else {
+                        lastClickedLngLat = e.lngLat;
+                        updateBuffer(e.lngLat);
+                    }
+                });
+
+                // Cursor
+                ['transmission-core', 'substations-core', 'pipelines-core'].forEach(l => {
+                    map.on('mouseenter', l, () => map.getCanvas().style.cursor = 'pointer');
+                    map.on('mouseleave', l, () => map.getCanvas().style.cursor = 'crosshair');
+                });
+                map.getCanvas().style.cursor = 'crosshair';
+
+            } catch (err) {
+                console.error('Error:', err);
+                document.querySelector('.loading-text').textContent = 'Error Loading Data';
+                document.querySelector('.loading-subtext').textContent = 'Please refresh to try again';
+            }
+        });
+    </script>
+</body>
+</html>
