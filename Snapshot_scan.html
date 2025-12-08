@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TerraScan — Integrated Analysis</title>
+    <title>Snapshot — Integrated Analysis</title>
+    <link rel="icon" type="image/png" href="https://images.squarespace-cdn.com/content/6087714b06d1991ac79e63c7/38666ce2-a0f9-4bcb-a352-98044e680157/LANDVOLT.png?format=100w&content-type=image%2Fpng">
     <link href="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.css" rel="stylesheet" />
     <script src="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js"></script>
     <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
@@ -290,7 +291,7 @@
 
     <div class="sidebar">
         <div class="sidebar-header">
-            <div class="logo"><div class="logo-icon">🌍</div><h1>TerraScan</h1></div>
+            <div class="logo"><div class="logo-icon">🌍</div><h1>Snapshot</h1></div>
             <div class="tagline">Integrated Analysis Engine v2.0</div>
         </div>
 
@@ -838,7 +839,7 @@
             });
 
             const summary = [
-                ["TERRASCAN ANALYSIS REPORT"], [],
+                ["SNAPSHOT ANALYSIS REPORT"], [],
                 ["Generated:", new Date().toISOString()],
                 ["Coordinates:", `${lastCoords.lat.toFixed(6)}, ${lastCoords.lng.toFixed(6)}`],
                 ["Infrastructure Buffer:", `${radInfra} mi (${bufferShape})`],
@@ -914,7 +915,7 @@
             });
             XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(envRows), "Environmental");
 
-            XLSX.writeFile(wb, `TerraScan_${lastCoords.lat.toFixed(4)}_${lastCoords.lng.toFixed(4)}.xlsx`);
+            XLSX.writeFile(wb, `Snapshot_${lastCoords.lat.toFixed(4)}_${lastCoords.lng.toFixed(4)}.xlsx`);
             showToast("Excel Report Exported");
         }
 
@@ -926,7 +927,7 @@
             ];
             const blob = new Blob([JSON.stringify({type:"FeatureCollection", features}, null, 2)], {type:'application/json'});
             const url = URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = url; a.download = "TerraScan_Data.geojson"; a.click();
+            const a = document.createElement('a'); a.href = url; a.download = "Snapshot_Data.geojson"; a.click();
             URL.revokeObjectURL(url);
             showToast("GeoJSON Exported");
         }
@@ -956,7 +957,7 @@
             const csv = rows.map(r => r.map(c => `"${(c||'').toString().replace(/"/g,'""')}"`).join(",")).join("\n");
             const blob = new Blob([csv], {type:'text/csv'});
             const url = URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = url; a.download = `TerraScan_${type}.csv`; a.click();
+            const a = document.createElement('a'); a.href = url; a.download = `Snapshot_${type}.csv`; a.click();
             URL.revokeObjectURL(url);
             showToast(`${type === 'env' ? 'Environmental' : 'Infrastructure'} CSV Exported`);
         }
