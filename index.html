@@ -80,7 +80,7 @@
 
         .control-section { padding: 16px 20px; border-bottom: 1px solid var(--border-color); }
         .control-section .search-hint {
-            font-size: 10px;
+            font-size: 8px;
             line-height: 1.2;
         }
         .section-label {
@@ -307,9 +307,8 @@
                     <input type="text" class="search-input" id="search-input" placeholder="Address, City, or Lat,Lng">
                     <button class="search-btn" id="search-btn">Analyze</button>
                 </div>
-                <div class="search-hint">e.g. <code>40.7128, -74.0060</code> or <code>Denver, CO</code></div>
+                <div class="search-hint">e.g. <code>41.27953, -95.93125</code> or <code>2222 N 11th st, Omaha</code></div>
             </div>
-
             <div class="control-section">
                 <div class="section-label">📏 Analysis Buffers</div>
                 
@@ -367,9 +366,18 @@
             <div id="map"></div>
             <div class="legend-panel">
                 <div class="legend-title">Legend</div>
-                <div class="legend-item"><div class="l-line" style="background:cyan"></div> Trans. Lines</div>
+                <div style="font-size:9px;color:#6b7280;margin-bottom:8px;text-transform:uppercase;">Transmission</div>
+                <div class="legend-item"><div class="l-line" style="background:#6366f1"></div> &lt;100 kV</div>
+                <div class="legend-item"><div class="l-line" style="background:#8b5cf6"></div> 100-161 kV</div>
+                <div class="legend-item"><div class="l-line" style="background:#22d3ee"></div> 220-287 kV</div>
+                <div class="legend-item"><div class="l-line" style="background:#4ade80"></div> 345 kV</div>
+                <div class="legend-item"><div class="l-line" style="background:#facc15"></div> 500 kV</div>
+                <div class="legend-item"><div class="l-line" style="background:#fb923c"></div> 735+ kV</div>
+                <div class="legend-item"><div class="l-line" style="background:#f472b6"></div> DC</div>
+                <div style="font-size:9px;color:#6b7280;margin:8px 0;text-transform:uppercase;">Infrastructure</div>
                 <div class="legend-item"><div class="l-dot" style="background:#f43f5e"></div> Substations</div>
                 <div class="legend-item"><div class="l-line" style="background:#f97316"></div> Gas Pipelines</div>
+                <div style="font-size:9px;color:#6b7280;margin:8px 0;text-transform:uppercase;">Environmental</div>
                 <div class="legend-item"><div class="l-box" style="background:#3b82f6"></div> Wetlands</div>
                 <div class="legend-item"><div class="l-box" style="background:#f59e0b"></div> Flood Zones</div>
                 <div class="legend-item"><div class="l-box" style="background:#8b5cf6"></div> Protected Areas</div>
@@ -501,7 +509,11 @@
                 map.addLayer({ id: 'd_flood', type: 'fill', source: 'lyr_flood', paint: {'fill-color': '#f59e0b', 'fill-opacity': 0.4} });
                 map.addLayer({ id: 'd_prot', type: 'fill', source: 'lyr_prot', paint: {'fill-color': '#8b5cf6', 'fill-opacity': 0.3} });
                 map.addLayer({ id: 'd_pipe', type: 'line', source: 'lyr_pipe', paint: {'line-color': '#f97316', 'line-width': 2} });
-                map.addLayer({ id: 'd_trans', type: 'line', source: 'lyr_trans', paint: {'line-color': '#22d3ee', 'line-width': 2} });
+                map.addLayer({ id: 'd_trans', type: 'line', source: 'lyr_trans', paint: {
+                    'line-color': ['match', ['get', 'voltage_rank'],
+                        1, '#6366f1', 2, '#8b5cf6', 3, '#22d3ee', 4, '#4ade80', 5, '#facc15', 6, '#fb923c', 7, '#f472b6', '#6366f1'],
+                    'line-width': ['interpolate', ['linear'], ['zoom'], 5, 1.5, 12, 3]
+                }});
                 map.addLayer({ id: 'd_sub', type: 'circle', source: 'lyr_sub', paint: {'circle-color': '#f43f5e', 'circle-radius': 5, 'circle-stroke-width':1, 'circle-stroke-color':'#fff'} });
 
                 // Restore data if we have it
@@ -547,6 +559,40 @@
             return descs[zone] || zone || 'Unknown';
         }
 
+        function getVoltageRank(vc) {
+            if (!vc) return 1;
+            const v = String(vc).toUpperCase();
+            if (v.includes('DC')) return 7;
+            if (v.includes('735') || v.includes('765') || v.includes('1000')) return 6;
+            if (v.includes('500')) return 5;
+            if (v.includes('345')) return 4;
+            if (v.includes('220') || v.includes('230') || v.includes('287')) return 3;
+            if (v.includes('100') || v.includes('115') || v.includes('138') || v.includes('161')) return 2;
+            return 1;
+        }
+
+        function getVoltageCategory(vc) {
+            if (!vc) return 'Unknown';
+            const v = String(vc).toUpperCase();
+            if (v.includes('DC')) return 'DC';
+            if (v.includes('735') || v.includes('765') || v.includes('1000')) return '735+ kV';
+            if (v.includes('500')) return '500 kV';
+            if (v.includes('345')) return '345 kV';
+            if (v.includes('220') || v.includes('230') || v.includes('287')) return '220-287 kV';
+            if (v.includes('100') || v.includes('115') || v.includes('138') || v.includes('161')) return '100-161 kV';
+            return '<100 kV';
+        }
+
+        const voltageColors = {
+            1: '#6366f1',  // <100 kV - indigo
+            2: '#8b5cf6',  // 100-161 kV - violet
+            3: '#22d3ee',  // 220-287 kV - cyan
+            4: '#4ade80',  // 345 kV - green
+            5: '#facc15',  // 500 kV - yellow
+            6: '#fb923c',  // 735+ kV - orange
+            7: '#f472b6'   // DC - pink
+        };
+
         // === MAP LAYERS INIT ===
         map.on('load', () => {
             ['buff_inf','buff_env','lyr_trans','lyr_sub','lyr_pipe','lyr_wet','lyr_flood','lyr_prot'].forEach(id => {
@@ -562,7 +608,11 @@
             map.addLayer({ id: 'd_flood', type: 'fill', source: 'lyr_flood', paint: {'fill-color': '#f59e0b', 'fill-opacity': 0.4} });
             map.addLayer({ id: 'd_prot', type: 'fill', source: 'lyr_prot', paint: {'fill-color': '#8b5cf6', 'fill-opacity': 0.3} });
             map.addLayer({ id: 'd_pipe', type: 'line', source: 'lyr_pipe', paint: {'line-color': '#f97316', 'line-width': 2} });
-            map.addLayer({ id: 'd_trans', type: 'line', source: 'lyr_trans', paint: {'line-color': '#22d3ee', 'line-width': 2} });
+            map.addLayer({ id: 'd_trans', type: 'line', source: 'lyr_trans', paint: {
+                'line-color': ['match', ['get', 'voltage_rank'],
+                    1, '#6366f1', 2, '#8b5cf6', 3, '#22d3ee', 4, '#4ade80', 5, '#facc15', 6, '#fb923c', 7, '#f472b6', '#6366f1'],
+                'line-width': ['interpolate', ['linear'], ['zoom'], 5, 1.5, 12, 3]
+            }});
             map.addLayer({ id: 'd_sub', type: 'circle', source: 'lyr_sub', paint: {'circle-color': '#f43f5e', 'circle-radius': 5, 'circle-stroke-width':1, 'circle-stroke-color':'#fff'} });
         });
 
@@ -707,7 +757,14 @@
                         landuse: land
                     },
                     infra: {
-                        trans: trans.filter(f => safeIntersects(f, buffInfra)),
+                        trans: trans.filter(f => safeIntersects(f, buffInfra)).map(f => ({
+                            ...f,
+                            properties: {
+                                ...f.properties,
+                                voltage_rank: getVoltageRank(f.properties?.VOLTAGE || f.properties?.VOLT_CLASS),
+                                voltage_category: getVoltageCategory(f.properties?.VOLTAGE || f.properties?.VOLT_CLASS)
+                            }
+                        })),
                         subs: sub.filter(f => safePointInPoly(f, buffInfra) || (f.geometry && turf.distance(turf.point([lng,lat]), f, {units:'miles'}) <= radInfra)),
                         pipe: pipe.filter(f => safeIntersects(f, buffInfra))
                     }
@@ -925,7 +982,7 @@
             });
 
             const summary = [
-                ["SNAPSHOT ANALYSIS REPORT"], [],
+                ["TERRASCAN ANALYSIS REPORT"], [],
                 ["Generated:", new Date().toISOString()],
                 ["Coordinates:", `${lastCoords.lat.toFixed(6)}, ${lastCoords.lng.toFixed(6)}`],
                 ["Infrastructure Buffer:", `${radInfra} mi (${bufferShape})`],
@@ -1001,7 +1058,7 @@
             });
             XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(envRows), "Environmental");
 
-            XLSX.writeFile(wb, `Snapshot_${lastCoords.lat.toFixed(4)}_${lastCoords.lng.toFixed(4)}.xlsx`);
+            XLSX.writeFile(wb, `TerraScan_${lastCoords.lat.toFixed(4)}_${lastCoords.lng.toFixed(4)}.xlsx`);
             showToast("Excel Report Exported");
         }
 
@@ -1013,7 +1070,7 @@
             ];
             const blob = new Blob([JSON.stringify({type:"FeatureCollection", features}, null, 2)], {type:'application/json'});
             const url = URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = url; a.download = "Snapshot_Data.geojson"; a.click();
+            const a = document.createElement('a'); a.href = url; a.download = "TerraScan_Data.geojson"; a.click();
             URL.revokeObjectURL(url);
             showToast("GeoJSON Exported");
         }
@@ -1043,7 +1100,7 @@
             const csv = rows.map(r => r.map(c => `"${(c||'').toString().replace(/"/g,'""')}"`).join(",")).join("\n");
             const blob = new Blob([csv], {type:'text/csv'});
             const url = URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = url; a.download = `Snapshot_${type}.csv`; a.click();
+            const a = document.createElement('a'); a.href = url; a.download = `TerraScan_${type}.csv`; a.click();
             URL.revokeObjectURL(url);
             showToast(`${type === 'env' ? 'Environmental' : 'Infrastructure'} CSV Exported`);
         }
@@ -1056,3 +1113,4 @@
     </script>
 </body>
 </html>
+
