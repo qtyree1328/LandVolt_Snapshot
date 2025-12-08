@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TerraScan — Integrated Analysis</title>
+    <link href="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.css" rel="stylesheet" />
+    <script src="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-primary: #0a0d14;
+            --bg-secondary: #111827;
+            --bg-tertiary: #1f2937;
+            --accent-cyan: #06b6d4;
+            --accent-emerald: #10b981;
+            --accent-amber: #f59e0b;
+            --accent-violet: #8b5cf6;
+            --accent-rose: #f43f5e;
+            --accent-orange: #f97316;
+            --text-primary: #f9fafb;
+            --text-secondary: #9ca3af;
+            --text-muted: #6b7280;
+            --border-color: rgba(75, 85, 99, 0.5);
+            --glass-bg: rgba(17, 24, 39, 0.95);
+            --glass-border: rgba(75, 85, 99, 0.4);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Space Grotesk', system-ui, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            overflow-x: hidden;
+            overflow-y: auto;
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* SIDEBAR */
+        .sidebar {
+            width: 340px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            z-index: 20;
+            position: fixed;
+            top: 0; bottom: 0; left: 0;
+        }
+        .sidebar-header {
+            padding: 18px 20px;
+            border-bottom: 1px solid var(--border-color);
+            background: linear-gradient(180deg, rgba(6, 182, 212, 0.08) 0%, transparent 100%);
+            flex-shrink: 0;
+        }
+        .logo { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
+        .logo-icon {
+            width: 32px; height: 32px;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-emerald));
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 16px;
+        }
+        .logo h1 {
+            font-size: 20px; font-weight: 700; letter-spacing: -0.02em;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--accent-cyan) 100%);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+        }
+        .tagline { font-size: 11px; color: var(--text-secondary); margin-left: 42px; }
+
+        .sidebar-content { flex: 1; overflow-y: auto; }
+        .sidebar-content::-webkit-scrollbar { width: 4px; }
+        .sidebar-content::-webkit-scrollbar-thumb { background: var(--bg-tertiary); }
+
+        .control-section { padding: 16px 20px; border-bottom: 1px solid var(--border-color); }
+        .section-label {
+            display: flex; align-items: center; gap: 6px;
+            font-size: 10px; font-weight: 600; color: var(--accent-cyan);
+            text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 10px;
+        }
+
+        .search-container { display: flex; gap: 8px; }
+        .search-input {
+            flex: 1; background: var(--bg-tertiary);
+            border: 1px solid var(--glass-border); border-radius: 8px;
+            padding: 10px 12px; color: var(--text-primary);
+            font-size: 13px; font-family: inherit; outline: none; transition: all 0.2s;
+        }
+        .search-input:focus { border-color: var(--accent-cyan); box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.15); }
+        .search-btn {
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-emerald));
+            border: none; border-radius: 8px; padding: 10px 16px;
+            color: var(--bg-primary); font-weight: 600; font-size: 12px;
+            cursor: pointer; text-transform: uppercase; letter-spacing: 0.05em;
+        }
+        .search-btn:hover { filter: brightness(1.1); }
+
+        .slider-group { margin-bottom: 16px; }
+        .slider-group label {
+            display: flex; justify-content: space-between;
+            font-size: 11px; color: var(--text-secondary); margin-bottom: 6px;
+        }
+        .slider-group label span.val { color: var(--text-primary); font-family: 'IBM Plex Mono', monospace; }
+        .buffer-slider {
+            width: 100%; -webkit-appearance: none; appearance: none;
+            height: 4px; background: var(--bg-tertiary); border-radius: 999px; outline: none;
+        }
+        .buffer-slider::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 14px; height: 14px;
+            border-radius: 999px; cursor: pointer; border: 2px solid var(--bg-primary);
+        }
+        #slider-infra::-webkit-slider-thumb { background: var(--accent-cyan); }
+        #slider-env::-webkit-slider-thumb { background: var(--accent-emerald); }
+
+        .shape-toggle { display: flex; gap: 12px; margin-top: 12px; }
+        .shape-toggle label { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-secondary); cursor: pointer; }
+        .shape-toggle input { accent-color: var(--accent-cyan); }
+
+        .layer-group-title { font-size: 9px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.1em; margin: 12px 0 6px 0; }
+        .layer-toggle { display: flex; align-items: center; padding: 6px 0; cursor: pointer; }
+        .layer-checkbox {
+            width: 14px; height: 14px; border-radius: 3px; margin-right: 8px;
+            display: flex; align-items: center; justify-content: center;
+            border: 2px solid; font-size: 9px;
+        }
+        .layer-checkbox.checked { background: currentColor; }
+        .layer-checkbox.checked::after { content: '✓'; color: var(--bg-primary); font-weight: 800; }
+        
+        .c-infra { color: var(--accent-cyan); border-color: var(--accent-cyan); }
+        .c-env { color: var(--accent-emerald); border-color: var(--accent-emerald); }
+        .c-sub { color: var(--accent-rose); border-color: var(--accent-rose); }
+        .c-pipe { color: var(--accent-orange); border-color: var(--accent-orange); }
+        .c-flood { color: var(--accent-amber); border-color: var(--accent-amber); }
+        .c-prot { color: var(--accent-violet); border-color: var(--accent-violet); }
+        .c-wet { color: #3b82f6; border-color: #3b82f6; }
+
+        .layer-label { font-size: 12px; color: var(--text-secondary); }
+        
+        /* MAIN CONTENT */
+        .main-content {
+            margin-left: 340px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        .map-wrapper {
+            height: 65vh; 
+            width: 100%;
+            position: relative;
+            background: #000;
+        }
+        #map { position: absolute; inset: 0; }
+
+        .legend-panel {
+            position: absolute; bottom: 20px; right: 20px;
+            background: var(--glass-bg); border: 1px solid var(--glass-border);
+            border-radius: 8px; padding: 12px; z-index: 10;
+            font-size: 10px; max-height: 300px; overflow-y: auto;
+        }
+        .legend-title { font-weight: 700; text-transform: uppercase; margin-bottom: 8px; color: var(--text-primary); }
+        .legend-item { display: flex; align-items: center; margin-bottom: 4px; color: var(--text-secondary); }
+        .l-box { width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
+        .l-line { width: 14px; height: 3px; border-radius: 2px; margin-right: 6px; }
+        .l-dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+
+        /* RESULTS */
+        .results-wrapper {
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border-color);
+            display: flex; 
+            flex-direction: column;
+            min-height: 400px;
+            flex: 1;
+        }
+        
+        .results-placeholder {
+            display: flex; align-items: center; justify-content: center;
+            height: 100%; color: var(--text-muted); font-size: 13px;
+            padding: 40px; text-align: center;
+        }
+
+        .results-container {
+            display: none;
+            flex-direction: column;
+            height: 100%;
+        }
+        .results-container.active { display: flex; }
+
+        .results-header {
+            padding: 10px 20px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex; justify-content: space-between; align-items: center;
+            background: var(--bg-tertiary);
+        }
+        .results-title h2 { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+        .results-meta { font-size: 11px; color: var(--text-muted); font-family: 'IBM Plex Mono', monospace; margin-left: 10px; }
+
+        .stats-row {
+            display: flex; gap: 10px; padding: 12px 20px;
+            overflow-x: auto; background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+        }
+        .stat-card {
+            background: var(--bg-tertiary); border: 1px solid var(--glass-border);
+            border-radius: 6px; padding: 8px 12px; min-width: 100px;
+            flex-shrink: 0;
+        }
+        .stat-label { font-size: 9px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; letter-spacing: 0.05em; }
+        .stat-value { font-size: 13px; font-weight: 700; color: var(--text-primary); font-family: 'IBM Plex Mono', monospace; }
+        .stat-subtext { font-size: 9px; color: var(--text-secondary); margin-top: 2px; }
+
+        .tabs-row {
+            display: flex; border-bottom: 1px solid var(--border-color);
+            background: var(--bg-secondary);
+        }
+        .tab-btn {
+            padding: 10px 20px; background: none; border: none;
+            color: var(--text-muted); font-size: 12px; font-weight: 600;
+            cursor: pointer; border-bottom: 2px solid transparent;
+        }
+        .tab-btn:hover { color: var(--text-primary); }
+        .tab-btn.active { color: var(--accent-cyan); border-bottom-color: var(--accent-cyan); background: rgba(6,182,212,0.05); }
+
+        .results-body {
+            flex: 1; display: flex; min-height: 400px;
+        }
+        .results-list {
+            flex: 1; padding: 16px; overflow-y: auto;
+        }
+
+        .r-item {
+            display: inline-block; width: 300px;
+            background: var(--bg-tertiary); border: 1px solid var(--glass-border);
+            border-radius: 6px; padding: 12px; margin: 0 10px 10px 0;
+            vertical-align: top;
+        }
+        .r-head { font-size: 12px; font-weight: 700; margin-bottom: 8px; color: var(--text-primary); }
+        .r-row { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 2px; }
+        .r-row:last-child { border: none; }
+        .r-lbl { color: var(--text-muted); }
+        .r-val { color: var(--text-secondary); text-align: right; font-weight: 500; }
+
+        .export-sidebar {
+            width: 220px; border-left: 1px solid var(--border-color);
+            padding: 16px; background: var(--bg-secondary);
+            display: flex; flex-direction: column; gap: 8px;
+        }
+        .export-header { font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px; }
+        .btn-export {
+            padding: 10px; border-radius: 6px; border: 1px solid var(--glass-border);
+            background: var(--bg-tertiary); color: var(--text-primary);
+            font-size: 11px; cursor: pointer; text-align: left;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .btn-export:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
+        .btn-export.primary { background: linear-gradient(135deg, var(--accent-cyan), var(--accent-emerald)); color: #0a0d14; border: none; font-weight: 700; }
+        .btn-export.primary:hover { filter: brightness(1.1); }
+
+        .loading-overlay {
+            position: absolute; inset: 0; background: rgba(10, 13, 20, 0.8);
+            backdrop-filter: blur(4px); z-index: 100;
+            display: none; align-items: center; justify-content: center; flex-direction: column;
+        }
+        .loading-overlay.active { display: flex; }
+        .spinner {
+            width: 40px; height: 40px; border: 3px solid rgba(6,182,212,0.3);
+            border-top-color: var(--accent-cyan); border-radius: 50%;
+            animation: spin 1s linear infinite; margin-bottom: 10px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .toast {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            background: var(--accent-emerald); color: #000;
+            padding: 10px 20px; border-radius: 20px; font-weight: 600; font-size: 13px;
+            opacity: 0; pointer-events: none; transition: opacity 0.3s; z-index: 200;
+        }
+        .toast.show { opacity: 1; }
+    </style>
+</head>
+<body>
+
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <div class="logo"><div class="logo-icon">🌍</div><h1>TerraScan</h1></div>
+            <div class="tagline">Integrated Analysis Engine v2.0</div>
+        </div>
+
+        <div class="sidebar-content">
+            <div class="control-section">
+                <div class="section-label">📍 Location Analysis</div>
+                <div class="search-container">
+                    <input type="text" class="search-input" id="search-input" placeholder="Address, City, or Lat,Lng">
+                    <button class="search-btn" id="search-btn">Analyze</button>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <div class="section-label">📏 Analysis Buffers</div>
+                
+                <div class="slider-group">
+                    <label>
+                        <span>⚡ Infrastructure</span>
+                        <span class="val" id="val-infra">2.0 mi</span>
+                    </label>
+                    <input type="range" class="buffer-slider" id="slider-infra" min="0.5" max="20" step="0.5" value="2.0">
+                </div>
+
+                <div class="slider-group">
+                    <label>
+                        <span>🌿 Environmental</span>
+                        <span class="val" id="val-env">0.25 mi</span>
+                    </label>
+                    <input type="range" class="buffer-slider" id="slider-env" min="0.1" max="2.0" step="0.05" value="0.25">
+                </div>
+
+                <div class="shape-toggle">
+                    <label><input type="radio" name="buffer-shape" value="circle" checked> Circle</label>
+                    <label><input type="radio" name="buffer-shape" value="square"> Square</label>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <div class="section-label">🗺️ Data Layers</div>
+
+                <div class="layer-group-title">Environmental</div>
+                <div class="layer-toggle" data-layer="landuse"><div class="layer-checkbox c-env checked"></div><span class="layer-label">Land Use (NLCD)</span></div>
+                <div class="layer-toggle" data-layer="wetlands"><div class="layer-checkbox c-wet checked"></div><span class="layer-label">Wetlands (NWI)</span></div>
+                <div class="layer-toggle" data-layer="floodzone"><div class="layer-checkbox c-flood checked"></div><span class="layer-label">Flood Zones (FEMA)</span></div>
+                <div class="layer-toggle" data-layer="protected"><div class="layer-checkbox c-prot checked"></div><span class="layer-label">Protected Areas</span></div>
+
+                <div class="layer-group-title">Infrastructure</div>
+                <div class="layer-toggle" data-layer="transmission"><div class="layer-checkbox c-infra checked"></div><span class="layer-label">Transmission Lines</span></div>
+                <div class="layer-toggle" data-layer="substations"><div class="layer-checkbox c-sub checked"></div><span class="layer-label">Substations</span></div>
+                <div class="layer-toggle" data-layer="pipelines"><div class="layer-checkbox c-pipe checked"></div><span class="layer-label">Gas Pipelines</span></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="loading-overlay" id="loading">
+            <div class="spinner"></div>
+            <div style="color:white; font-size:14px; font-weight:600;">Processing Spatial Data...</div>
+            <div style="color:#9ca3af; font-size:11px; margin-top:5px;">Querying federal databases</div>
+        </div>
+
+        <div class="map-wrapper">
+            <div id="map"></div>
+            <div class="legend-panel">
+                <div class="legend-title">Legend</div>
+                <div class="legend-item"><div class="l-line" style="background:cyan"></div> Trans. Lines</div>
+                <div class="legend-item"><div class="l-dot" style="background:#f43f5e"></div> Substations</div>
+                <div class="legend-item"><div class="l-line" style="background:#f97316"></div> Gas Pipelines</div>
+                <div class="legend-item"><div class="l-box" style="background:#3b82f6"></div> Wetlands</div>
+                <div class="legend-item"><div class="l-box" style="background:#f59e0b"></div> Flood Zones</div>
+                <div class="legend-item"><div class="l-box" style="background:#8b5cf6"></div> Protected Areas</div>
+            </div>
+        </div>
+
+        <div class="results-wrapper" id="results-panel">
+            <div class="results-placeholder" id="res-placeholder">
+                <div>
+                    <div style="font-size:30px; margin-bottom:10px;">📡</div>
+                    Enter a location and click Analyze<br>to generate a report.
+                </div>
+            </div>
+
+            <div class="results-container" id="res-container">
+                <div class="results-header">
+                    <div class="results-title">
+                        <h2>Analysis Results</h2>
+                        <span class="results-meta" id="res-meta">--</span>
+                    </div>
+                </div>
+
+                <div class="stats-row">
+                    <div class="stat-card" style="border-color: rgba(6,182,212,0.5);">
+                        <div class="stat-label">Highest Voltage</div>
+                        <div class="stat-value" id="stat-max-volt">--</div>
+                        <div class="stat-subtext" id="stat-volt-dist"></div>
+                    </div>
+                    <div class="stat-card" style="border-color: rgba(244,63,94,0.5);">
+                        <div class="stat-label">Nearest Substation</div>
+                        <div class="stat-value" id="stat-sub-dist">--</div>
+                        <div class="stat-subtext" id="stat-sub-name">N/A</div>
+                    </div>
+                    <div class="stat-card" style="border-color: rgba(249,115,22,0.5);">
+                        <div class="stat-label">Pipelines</div>
+                        <div class="stat-value" id="stat-pipe-count">0</div>
+                        <div class="stat-subtext">Segments</div>
+                    </div>
+                    <div class="stat-card" style="border-color: rgba(16,185,129,0.5);">
+                        <div class="stat-label">Dominant Land</div>
+                        <div class="stat-value" id="stat-landuse">--</div>
+                    </div>
+                    <div class="stat-card" style="border-color: rgba(245,158,11,0.5);">
+                        <div class="stat-label">Flood Zone</div>
+                        <div class="stat-value" id="stat-flood-overlap">--</div>
+                        <div class="stat-subtext" id="stat-flood-zone"></div>
+                    </div>
+                    <div class="stat-card" style="border-color: #3b82f6;">
+                        <div class="stat-label">Wetlands</div>
+                        <div class="stat-value" id="stat-wet-count">0</div>
+                    </div>
+                </div>
+
+                <div class="tabs-row">
+                    <button class="tab-btn active" data-target="infra">Infrastructure Details</button>
+                    <button class="tab-btn" data-target="env">Environmental Details</button>
+                </div>
+
+                <div class="results-body">
+                    <div class="results-list" id="res-content"></div>
+                    <div class="export-sidebar">
+                        <div class="export-header">Export Data</div>
+                        <button class="btn-export primary" id="btn-export-summary">📊 Excel Summary Report</button>
+                        <button class="btn-export" id="btn-export-geo">🗺️ Full GeoJSON Data</button>
+                        <button class="btn-export" id="btn-export-env-csv">🌿 Environmental CSV</button>
+                        <button class="btn-export" id="btn-export-infra-csv">⚡ Infrastructure CSV</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast">Export Complete</div>
+
+    <script>
+        // === CONFIG & STATE ===
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: {
+                version: 8,
+                sources: {
+                    'carto-dark': { type: 'raster', tiles: ['https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png'], tileSize: 256 }
+                },
+                layers: [{ id: 'carto-dark', type: 'raster', source: 'carto-dark' }]
+            },
+            center: [-98.5, 39.5], zoom: 4
+        });
+        map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+        let radInfra = 2.0;
+        let radEnv = 0.25;
+        let bufferShape = 'circle';
+        let lastCoords = null;
+        let currentData = null;
+        let currentTab = 'infra';
+        let currentMarker = null;
+
+        const SERVICE_URLS = {
+            wetlands: 'https://fwspublicservices.wim.usgs.gov/wetlandsmapservice/rest/services/Wetlands/MapServer/0/query',
+            flood: 'https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/USA_Flood_Hazard_Reduced_Set_gdb/FeatureServer/0/query',
+            protected: 'https://services.arcgis.com/v01gqwM5QqNysAAi/arcgis/rest/services/Manager_Name/FeatureServer/0/query',
+            trans: 'https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/US_Electric_Power_Transmission_Lines/FeatureServer/0/query',
+            subs: 'https://services6.arcgis.com/OO2s4OoyCZkYJ6oE/arcgis/rest/services/Substations/FeatureServer/0/query',
+            pipe: 'https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/Natural_Gas_Interstate_and_Intrastate_Pipelines_1/FeatureServer/0/query'
+        };
+
+        const NLCD_CLASSES = { 11:'Water', 21:'Developed Open', 22:'Developed Low', 23:'Developed Med', 24:'Developed High', 31:'Barren', 41:'Forest Decid', 42:'Forest Everg', 43:'Forest Mix', 52:'Shrub', 71:'Grassland', 81:'Pasture', 82:'Crops', 90:'Wetlands Woody', 95:'Wetlands Herb' };
+
+        function getFloodZoneDesc(zone) {
+            const descs = { 'A': 'High Risk', 'AE': 'High Risk (BFE)', 'AH': 'Shallow Flooding', 'AO': 'Sheet Flow', 'V': 'Coastal High Risk', 'VE': 'Coastal (BFE)', 'X': 'Moderate/Low Risk', 'D': 'Undetermined' };
+            return descs[zone] || zone || 'Unknown';
+        }
+
+        // === MAP LAYERS INIT ===
+        map.on('load', () => {
+            ['buff_inf','buff_env','lyr_trans','lyr_sub','lyr_pipe','lyr_wet','lyr_flood','lyr_prot'].forEach(id => {
+                map.addSource(id, { type: 'geojson', data: {type:'FeatureCollection', features:[]} });
+            });
+
+            map.addLayer({ id: 'fill_buff_inf', type: 'fill', source: 'buff_inf', paint: {'fill-color': '#06b6d4', 'fill-opacity': 0.08} });
+            map.addLayer({ id: 'line_buff_inf', type: 'line', source: 'buff_inf', paint: {'line-color': '#06b6d4', 'line-width': 1, 'line-dasharray':[4,2]} });
+            map.addLayer({ id: 'fill_buff_env', type: 'fill', source: 'buff_env', paint: {'fill-color': '#10b981', 'fill-opacity': 0.15} });
+            map.addLayer({ id: 'line_buff_env', type: 'line', source: 'buff_env', paint: {'line-color': '#10b981', 'line-width': 2} });
+
+            map.addLayer({ id: 'd_wet', type: 'fill', source: 'lyr_wet', paint: {'fill-color': '#3b82f6', 'fill-opacity': 0.4} });
+            map.addLayer({ id: 'd_flood', type: 'fill', source: 'lyr_flood', paint: {'fill-color': '#f59e0b', 'fill-opacity': 0.4} });
+            map.addLayer({ id: 'd_prot', type: 'fill', source: 'lyr_prot', paint: {'fill-color': '#8b5cf6', 'fill-opacity': 0.3} });
+            map.addLayer({ id: 'd_pipe', type: 'line', source: 'lyr_pipe', paint: {'line-color': '#f97316', 'line-width': 2} });
+            map.addLayer({ id: 'd_trans', type: 'line', source: 'lyr_trans', paint: {'line-color': '#22d3ee', 'line-width': 2} });
+            map.addLayer({ id: 'd_sub', type: 'circle', source: 'lyr_sub', paint: {'circle-color': '#f43f5e', 'circle-radius': 5, 'circle-stroke-width':1, 'circle-stroke-color':'#fff'} });
+        });
+
+        // === UI HANDLERS ===
+        document.getElementById('slider-infra').addEventListener('input', e => {
+            radInfra = parseFloat(e.target.value);
+            document.getElementById('val-infra').innerText = radInfra + " mi";
+        });
+        document.getElementById('slider-env').addEventListener('input', e => {
+            radEnv = parseFloat(e.target.value);
+            document.getElementById('val-env').innerText = radEnv + " mi";
+        });
+
+        document.querySelectorAll('input[name="buffer-shape"]').forEach(r => {
+            r.addEventListener('change', () => { bufferShape = r.value; });
+        });
+
+        document.getElementById('search-btn').addEventListener('click', doSearch);
+        document.getElementById('search-input').addEventListener('keypress', e => { if(e.key === 'Enter') doSearch(); });
+
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentTab = btn.dataset.target;
+                renderResultsList();
+            });
+        });
+
+        document.querySelectorAll('.layer-toggle').forEach(t => {
+            t.addEventListener('click', () => {
+                const cb = t.querySelector('.layer-checkbox');
+                cb.classList.toggle('checked');
+                const mapLyrId = { 'wetlands': 'd_wet', 'floodzone': 'd_flood', 'protected': 'd_prot', 'transmission': 'd_trans', 'substations': 'd_sub', 'pipelines': 'd_pipe' }[t.dataset.layer];
+                if(mapLyrId && map.getLayer(mapLyrId)) {
+                    map.setLayoutProperty(mapLyrId, 'visibility', cb.classList.contains('checked') ? 'visible' : 'none');
+                }
+            });
+        });
+
+        document.getElementById('btn-export-summary').addEventListener('click', exportExcelSummary);
+        document.getElementById('btn-export-geo').addEventListener('click', exportGeoJSON);
+        document.getElementById('btn-export-env-csv').addEventListener('click', () => exportCSV('env'));
+        document.getElementById('btn-export-infra-csv').addEventListener('click', () => exportCSV('infra'));
+
+        // === BUFFER GEOMETRY ===
+        function createBuffer(center, radiusMiles, shape) {
+            const pt = turf.point(center);
+            if (shape === 'square') {
+                const dist = radiusMiles * 1.60934;
+                return turf.square(turf.bbox(turf.buffer(pt, dist, {units: 'kilometers'})));
+            }
+            return turf.circle(pt, radiusMiles, {units: 'miles'});
+        }
+
+        function createBufferFeature(center, radiusMiles, shape) {
+            const pt = turf.point(center);
+            if (shape === 'square') {
+                const dist = radiusMiles * 1.60934;
+                const buffered = turf.buffer(pt, dist, {units: 'kilometers'});
+                const bbox = turf.square(turf.bbox(buffered));
+                return turf.bboxPolygon(bbox);
+            }
+            return turf.circle(pt, radiusMiles, {units: 'miles'});
+        }
+
+        // === SEARCH & ANALYSIS ===
+        async function doSearch() {
+            const query = document.getElementById('search-input').value;
+            if(!query) return;
+
+            const coordMatch = query.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
+            if(coordMatch) {
+                goToLocation(parseFloat(coordMatch[2]), parseFloat(coordMatch[1]));
+            } else {
+                try {
+                    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1&countrycodes=us`);
+                    const d = await r.json();
+                    if(!d.length) { alert("Location not found"); return; }
+                    goToLocation(parseFloat(d[0].lon), parseFloat(d[0].lat));
+                } catch(e) { alert("Search error"); return; }
+            }
+        }
+
+        async function goToLocation(lng, lat) {
+            lastCoords = {lng, lat};
+            map.flyTo({ center: [lng, lat], zoom: 13 });
+            
+            if(currentMarker) currentMarker.remove();
+            const el = document.createElement('div');
+            el.style.cssText = 'width:20px;height:20px;background:#10b981;border-radius:50%;border:3px solid white;box-shadow:0 0 0 3px rgba(16,185,129,0.3)';
+            currentMarker = new maplibregl.Marker(el).setLngLat([lng, lat]).addTo(map);
+
+            const buffInfra = createBufferFeature([lng, lat], radInfra, bufferShape);
+            const buffEnv = createBufferFeature([lng, lat], radEnv, bufferShape);
+            
+            map.getSource('buff_inf').setData(buffInfra);
+            map.getSource('buff_env').setData(buffEnv);
+
+            document.getElementById('loading').classList.add('active');
+            
+            try {
+                const bboxEnv = turf.bbox(buffEnv);
+                const bboxInf = turf.bbox(buffInfra);
+                
+                const [wet, flood, prot, land, trans, sub, pipe] = await Promise.all([
+                    queryEsri(SERVICE_URLS.wetlands, bboxEnv),
+                    queryEsri(SERVICE_URLS.flood, bboxEnv),
+                    queryEsri(SERVICE_URLS.protected, bboxEnv),
+                    sampleNLCD(lng, lat),
+                    queryEsri(SERVICE_URLS.trans, bboxInf),
+                    queryEsri(SERVICE_URLS.subs, bboxInf),
+                    queryEsri(SERVICE_URLS.pipe, bboxInf)
+                ]);
+
+                const safeIntersects = (f, geom) => {
+                    if(!f || !f.geometry) return false;
+                    try { return turf.booleanIntersects(f, geom); } catch(e){ return false; }
+                };
+                const safePointInPoly = (f, geom) => {
+                    if(!f || !f.geometry) return false;
+                    try { return turf.booleanPointInPolygon(f, geom); } catch(e){ return false; }
+                };
+
+                currentData = {
+                    env: {
+                        wetlands: wet.filter(f => safeIntersects(f, buffEnv)),
+                        flood: flood.filter(f => safeIntersects(f, buffEnv)),
+                        protected: prot.filter(f => safeIntersects(f, buffEnv)),
+                        landuse: land
+                    },
+                    infra: {
+                        trans: trans.filter(f => safeIntersects(f, buffInfra)),
+                        subs: sub.filter(f => safePointInPoly(f, buffInfra) || (f.geometry && turf.distance(turf.point([lng,lat]), f, {units:'miles'}) <= radInfra)),
+                        pipe: pipe.filter(f => safeIntersects(f, buffInfra))
+                    }
+                };
+
+                map.getSource('lyr_wet').setData({type:'FeatureCollection', features: currentData.env.wetlands});
+                map.getSource('lyr_flood').setData({type:'FeatureCollection', features: currentData.env.flood});
+                map.getSource('lyr_prot').setData({type:'FeatureCollection', features: currentData.env.protected});
+                map.getSource('lyr_trans').setData({type:'FeatureCollection', features: currentData.infra.trans});
+                map.getSource('lyr_sub').setData({type:'FeatureCollection', features: currentData.infra.subs});
+                map.getSource('lyr_pipe').setData({type:'FeatureCollection', features: currentData.infra.pipe});
+
+                updateStats();
+                renderResultsList();
+                
+                document.getElementById('res-placeholder').style.display = 'none';
+                document.getElementById('res-container').classList.add('active');
+                document.getElementById('res-meta').innerText = `${lat.toFixed(4)}, ${lng.toFixed(4)} | Env: ${radEnv}mi | Infra: ${radInfra}mi | ${bufferShape}`;
+
+            } catch(e) {
+                console.error(e);
+                alert("Analysis failed.");
+            } finally {
+                document.getElementById('loading').classList.remove('active');
+            }
+        }
+
+        async function queryEsri(url, bbox) {
+            const params = new URLSearchParams({
+                f: 'geojson', returnGeometry: 'true', outFields: '*', spatialRel: 'esriSpatialRelIntersects',
+                geometry: JSON.stringify({xmin:bbox[0], ymin:bbox[1], xmax:bbox[2], ymax:bbox[3], spatialReference:{wkid:4326}}),
+                geometryType: 'esriGeometryEnvelope'
+            });
+            try {
+                const r = await fetch(`${url}?${params}`);
+                if(!r.ok) return [];
+                const d = await r.json();
+                return d.features || [];
+            } catch { return []; }
+        }
+
+        async function sampleNLCD(lng, lat) {
+            const url = 'https://sampleserver6.arcgisonline.com/arcgis/rest/services/NLCDLandCover2001/ImageServer/identify';
+            const params = new URLSearchParams({
+                f: 'json', geometryType: 'esriGeometryPoint', returnGeometry: 'false',
+                geometry: JSON.stringify({x:lng, y:lat, spatialReference:{wkid:4326}})
+            });
+            try {
+                const r = await fetch(`${url}?${params}`);
+                const d = await r.json();
+                return NLCD_CLASSES[d.value] || "Unknown";
+            } catch { return "Unknown"; }
+        }
+
+        // === STATS ===
+        function updateStats() {
+            const pt = turf.point([lastCoords.lng, lastCoords.lat]);
+
+            // Nearest Substation
+            let minD = Infinity, nearestName = "None";
+            currentData.infra.subs.forEach(f => {
+                if(f.geometry) {
+                    const d = turf.distance(pt, f, {units:'miles'});
+                    if(d < minD) { minD = d; nearestName = f.properties?.NAME || "Substation"; }
+                }
+            });
+            document.getElementById('stat-sub-dist').innerText = minD < Infinity ? minD.toFixed(2) + " mi" : "--";
+            document.getElementById('stat-sub-name').innerText = nearestName;
+
+            // Max Voltage & Distance to highest voltage line
+            let maxV = 0, maxVLine = null;
+            currentData.infra.trans.forEach(f => {
+                const vRaw = f.properties?.VOLTAGE || f.properties?.VOLT_CLASS || "0";
+                const nums = String(vRaw).match(/\d+/g);
+                if(nums) {
+                    const localMax = Math.max(...nums.map(n=>parseInt(n)));
+                    if(localMax > maxV && localMax < 999999) { maxV = localMax; maxVLine = f; }
+                }
+            });
+            document.getElementById('stat-max-volt').innerText = maxV > 0 ? maxV + " kV" : "--";
+            if(maxVLine && maxVLine.geometry) {
+                try {
+                    const nearest = turf.nearestPointOnLine(maxVLine, pt, {units: 'miles'});
+                    document.getElementById('stat-volt-dist').innerText = nearest.properties.dist.toFixed(2) + " mi away";
+                } catch(e) { document.getElementById('stat-volt-dist').innerText = ""; }
+            } else {
+                document.getElementById('stat-volt-dist').innerText = "";
+            }
+
+            // Pipelines
+            document.getElementById('stat-pipe-count').innerText = currentData.infra.pipe.length;
+
+            // Land Use
+            document.getElementById('stat-landuse').innerText = currentData.env.landuse;
+
+            // Flood Zone Overlap
+            let floodOverlap = false, floodZoneAtPoint = "";
+            currentData.env.flood.forEach(f => {
+                try {
+                    if(turf.booleanPointInPolygon(pt, f)) {
+                        floodOverlap = true;
+                        floodZoneAtPoint = f.properties?.FLD_ZONE || "Yes";
+                    }
+                } catch(e) {}
+            });
+            document.getElementById('stat-flood-overlap').innerText = floodOverlap ? "YES" : "No";
+            document.getElementById('stat-flood-overlap').style.color = floodOverlap ? "#f59e0b" : "inherit";
+            document.getElementById('stat-flood-zone').innerText = floodOverlap ? `Zone ${floodZoneAtPoint}` : `${currentData.env.flood.length} nearby`;
+
+            // Wetlands
+            document.getElementById('stat-wet-count').innerText = currentData.env.wetlands.length;
+        }
+
+        // === RENDER LIST ===
+        function renderResultsList() {
+            const container = document.getElementById('res-content');
+            container.innerHTML = "";
+            const pt = turf.point([lastCoords.lng, lastCoords.lat]);
+
+            if(currentTab === 'infra') {
+                currentData.infra.trans.forEach(f => {
+                    const p = f.properties || {};
+                    let dist = "";
+                    try { if(f.geometry) { const n = turf.nearestPointOnLine(f, pt, {units:'miles'}); dist = n.properties.dist.toFixed(2) + " mi"; } } catch(e){}
+                    container.innerHTML += `<div class="r-item" style="border-left: 3px solid cyan;">
+                        <div class="r-head">Transmission Line</div>
+                        <div class="r-row"><span class="r-lbl">Voltage</span><span class="r-val">${p.VOLTAGE || p.VOLT_CLASS || 'N/A'}</span></div>
+                        <div class="r-row"><span class="r-lbl">Distance</span><span class="r-val">${dist}</span></div>
+                        <div class="r-row"><span class="r-lbl">Owner</span><span class="r-val">${p.OWNER || 'N/A'}</span></div>
+                    </div>`;
+                });
+                currentData.infra.subs.sort((a,b) => turf.distance(pt,a)-turf.distance(pt,b)).forEach(f => {
+                    const p = f.properties || {};
+                    const d = f.geometry ? turf.distance(pt, f, {units:'miles'}).toFixed(2) : "";
+                    container.innerHTML += `<div class="r-item" style="border-left: 3px solid #f43f5e;">
+                        <div class="r-head">${p.NAME || 'Substation'}</div>
+                        <div class="r-row"><span class="r-lbl">Distance</span><span class="r-val" style="color:#f43f5e;font-weight:700">${d} mi</span></div>
+                        <div class="r-row"><span class="r-lbl">Owner</span><span class="r-val">${p.OWNER || 'N/A'}</span></div>
+                    </div>`;
+                });
+                currentData.infra.pipe.forEach(f => {
+                    const p = f.properties || {};
+                    container.innerHTML += `<div class="r-item" style="border-left: 3px solid #f97316;">
+                        <div class="r-head">Gas Pipeline</div>
+                        <div class="r-row"><span class="r-lbl">Operator</span><span class="r-val">${p.Operator || 'N/A'}</span></div>
+                        <div class="r-row"><span class="r-lbl">Type</span><span class="r-val">${p.Typepipe || 'N/A'}</span></div>
+                    </div>`;
+                });
+                if(!container.innerHTML) container.innerHTML = `<div style="color:grey;padding:20px">No infrastructure found in ${radInfra} mi buffer.</div>`;
+            } else {
+                currentData.env.flood.forEach(f => {
+                    const p = f.properties || {};
+                    const inZone = turf.booleanPointInPolygon(pt, f);
+                    container.innerHTML += `<div class="r-item" style="border-left: 3px solid #f59e0b;">
+                        <div class="r-head">Flood Zone ${p.FLD_ZONE || ''}</div>
+                        <div class="r-row"><span class="r-lbl">Risk Level</span><span class="r-val">${getFloodZoneDesc(p.FLD_ZONE)}</span></div>
+                        <div class="r-row"><span class="r-lbl">Point Inside?</span><span class="r-val" style="color:${inZone?'#f59e0b':'inherit'}">${inZone ? 'YES' : 'No'}</span></div>
+                    </div>`;
+                });
+                currentData.env.wetlands.forEach(f => {
+                    const p = f.properties || {};
+                    container.innerHTML += `<div class="r-item" style="border-left: 3px solid #3b82f6;">
+                        <div class="r-head">Wetland</div>
+                        <div class="r-row"><span class="r-lbl">Type</span><span class="r-val">${p.WETLAND_TYPE || 'N/A'}</span></div>
+                        <div class="r-row"><span class="r-lbl">Acres</span><span class="r-val">${p.ACRES ? parseFloat(p.ACRES).toFixed(1) : ''}</span></div>
+                    </div>`;
+                });
+                currentData.env.protected.forEach(f => {
+                    const p = f.properties || {};
+                    container.innerHTML += `<div class="r-item" style="border-left: 3px solid #8b5cf6;">
+                        <div class="r-head">${p.Unit_Nm || 'Protected Area'}</div>
+                        <div class="r-row"><span class="r-lbl">Manager</span><span class="r-val">${p.Mang_Name || 'N/A'}</span></div>
+                    </div>`;
+                });
+                if(!container.innerHTML) container.innerHTML = `<div style="color:grey;padding:20px">No environmental features found in ${radEnv} mi buffer.</div>`;
+            }
+        }
+
+        // === EXPORTS ===
+        function exportExcelSummary() {
+            if(!currentData || !lastCoords) return;
+            const wb = XLSX.utils.book_new();
+            const pt = turf.point([lastCoords.lng, lastCoords.lat]);
+            
+            // Check flood overlap
+            let floodOverlap = "No", floodZoneAtPoint = "";
+            currentData.env.flood.forEach(f => {
+                try { if(turf.booleanPointInPolygon(pt, f)) { floodOverlap = "YES"; floodZoneAtPoint = f.properties?.FLD_ZONE || "Unknown"; } } catch(e){}
+            });
+
+            // Nearest sub
+            let nearestSubName = "None", nearestSubDist = "N/A", nearestSubOwner = "";
+            let minD = Infinity;
+            currentData.infra.subs.forEach(f => {
+                if(f.geometry) {
+                    const d = turf.distance(pt, f, {units:'miles'});
+                    if(d < minD) { minD = d; nearestSubName = f.properties?.NAME || "Substation"; nearestSubOwner = f.properties?.OWNER || ""; }
+                }
+            });
+            if(minD < Infinity) nearestSubDist = minD.toFixed(2) + " mi";
+
+            // Max voltage line
+            let maxV = 0, maxVOwner = "", maxVDist = "N/A";
+            currentData.infra.trans.forEach(f => {
+                const vRaw = f.properties?.VOLTAGE || f.properties?.VOLT_CLASS || "0";
+                const nums = String(vRaw).match(/\d+/g);
+                if(nums) {
+                    const localMax = Math.max(...nums.map(n=>parseInt(n)));
+                    if(localMax > maxV && localMax < 999999) {
+                        maxV = localMax;
+                        maxVOwner = f.properties?.OWNER || "";
+                        try { if(f.geometry) { const n = turf.nearestPointOnLine(f, pt, {units:'miles'}); maxVDist = n.properties.dist.toFixed(2) + " mi"; } } catch(e){}
+                    }
+                }
+            });
+
+            const summary = [
+                ["TERRASCAN ANALYSIS REPORT"], [],
+                ["Generated:", new Date().toISOString()],
+                ["Coordinates:", `${lastCoords.lat.toFixed(6)}, ${lastCoords.lng.toFixed(6)}`],
+                ["Infrastructure Buffer:", `${radInfra} mi (${bufferShape})`],
+                ["Environmental Buffer:", `${radEnv} mi (${bufferShape})`],
+                [], ["═══════════════════════════════════════"],
+                ["SITE RISK SUMMARY"], ["═══════════════════════════════════════"], [],
+                ["FLOOD ZONE OVERLAP:", floodOverlap],
+                ["Flood Zone at Point:", floodZoneAtPoint || "Not in flood zone"], [],
+                ["NEAREST SUBSTATION:", nearestSubName],
+                ["  Distance:", nearestSubDist],
+                ["  Owner:", nearestSubOwner], [],
+                ["HIGHEST VOLTAGE LINE:", maxV > 0 ? maxV + " kV" : "None found"],
+                ["  Distance to Line:", maxVDist],
+                ["  Owner:", maxVOwner], [],
+                ["═══════════════════════════════════════"],
+                ["ENVIRONMENTAL SUMMARY"], ["═══════════════════════════════════════"], [],
+                ["Dominant Land Use:", currentData.env.landuse],
+                ["Total Wetlands:", currentData.env.wetlands.length],
+                ["Total Flood Zones:", currentData.env.flood.length],
+                ["Total Protected Areas:", currentData.env.protected.length], [],
+                ["═══════════════════════════════════════"],
+                ["INFRASTRUCTURE SUMMARY"], ["═══════════════════════════════════════"], [],
+                ["Total Transmission Lines:", currentData.infra.trans.length],
+                ["Total Substations:", currentData.infra.subs.length],
+                ["Total Pipelines:", currentData.infra.pipe.length]
+            ];
+
+            // Breakdowns
+            const aggregate = (arr, key) => {
+                const counts = {};
+                arr.forEach(f => { const v = f.properties?.[key] || "Unknown"; counts[v] = (counts[v]||0)+1; });
+                return Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+            };
+
+            summary.push([], ["Flood Zone Breakdown:"]);
+            aggregate(currentData.env.flood, 'FLD_ZONE').forEach(([k,v]) => summary.push([`  ${k} (${getFloodZoneDesc(k)}):`, v]));
+            
+            summary.push([], ["Wetland Type Breakdown:"]);
+            aggregate(currentData.env.wetlands, 'WETLAND_TYPE').forEach(([k,v]) => summary.push([`  ${k}:`, v]));
+
+            summary.push([], ["Pipeline Operators:"]);
+            aggregate(currentData.infra.pipe, 'Operator').forEach(([k,v]) => summary.push([`  ${k}:`, v]));
+
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), "Summary");
+
+            // Infrastructure sheet
+            const infraRows = [["Type", "Name", "Distance (mi)", "Voltage/Details", "Owner"]];
+            currentData.infra.subs.forEach(f => {
+                const d = f.geometry ? turf.distance(pt, f, {units:'miles'}).toFixed(2) : "";
+                infraRows.push(["Substation", f.properties?.NAME || "", d, "", f.properties?.OWNER || ""]);
+            });
+            currentData.infra.trans.forEach(f => {
+                let dist = "";
+                try { if(f.geometry) { const n = turf.nearestPointOnLine(f, pt, {units:'miles'}); dist = n.properties.dist.toFixed(2); } } catch(e){}
+                infraRows.push(["Transmission", "", dist, f.properties?.VOLTAGE || f.properties?.VOLT_CLASS || "", f.properties?.OWNER || ""]);
+            });
+            currentData.infra.pipe.forEach(f => {
+                infraRows.push(["Pipeline", f.properties?.Pipename || "", "", f.properties?.Typepipe || "", f.properties?.Operator || ""]);
+            });
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(infraRows), "Infrastructure");
+
+            // Environmental sheet
+            const envRows = [["Type", "Name/Zone", "Details", "Acres"]];
+            currentData.env.flood.forEach(f => {
+                const inZone = turf.booleanPointInPolygon(pt, f) ? "POINT INSIDE" : "";
+                envRows.push(["Flood Zone", f.properties?.FLD_ZONE || "", `${getFloodZoneDesc(f.properties?.FLD_ZONE)} ${inZone}`, ""]);
+            });
+            currentData.env.wetlands.forEach(f => {
+                envRows.push(["Wetland", f.properties?.WETLAND_TYPE || "", f.properties?.ATTRIBUTE || "", f.properties?.ACRES || ""]);
+            });
+            currentData.env.protected.forEach(f => {
+                envRows.push(["Protected", f.properties?.Unit_Nm || "", f.properties?.Mang_Name || "", ""]);
+            });
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(envRows), "Environmental");
+
+            XLSX.writeFile(wb, `TerraScan_${lastCoords.lat.toFixed(4)}_${lastCoords.lng.toFixed(4)}.xlsx`);
+            showToast("Excel Report Exported");
+        }
+
+        function exportGeoJSON() {
+            if(!currentData) return;
+            const features = [
+                ...currentData.infra.trans, ...currentData.infra.subs, ...currentData.infra.pipe,
+                ...currentData.env.wetlands, ...currentData.env.flood, ...currentData.env.protected
+            ];
+            const blob = new Blob([JSON.stringify({type:"FeatureCollection", features}, null, 2)], {type:'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = "TerraScan_Data.geojson"; a.click();
+            URL.revokeObjectURL(url);
+            showToast("GeoJSON Exported");
+        }
+
+        function exportCSV(type) {
+            if(!currentData) return;
+            let rows = [];
+            if(type === 'env') {
+                rows.push(["Layer","Type","Name","Details","Acres"]);
+                currentData.env.flood.forEach(f => rows.push(["Flood", f.properties?.FLD_ZONE, "", getFloodZoneDesc(f.properties?.FLD_ZONE), ""]));
+                currentData.env.wetlands.forEach(f => rows.push(["Wetland", f.properties?.WETLAND_TYPE, "", f.properties?.ATTRIBUTE, f.properties?.ACRES]));
+                currentData.env.protected.forEach(f => rows.push(["Protected", "", f.properties?.Unit_Nm, f.properties?.Mang_Name, ""]));
+            } else {
+                const pt = turf.point([lastCoords.lng, lastCoords.lat]);
+                rows.push(["Layer","Name","Voltage","Distance_mi","Owner"]);
+                currentData.infra.subs.forEach(f => {
+                    const d = f.geometry ? turf.distance(pt, f, {units:'miles'}).toFixed(2) : "";
+                    rows.push(["Substation", f.properties?.NAME, "", d, f.properties?.OWNER]);
+                });
+                currentData.infra.trans.forEach(f => {
+                    let dist = "";
+                    try { if(f.geometry) { const n = turf.nearestPointOnLine(f, pt, {units:'miles'}); dist = n.properties.dist.toFixed(2); } } catch(e){}
+                    rows.push(["Transmission", "", f.properties?.VOLTAGE || f.properties?.VOLT_CLASS, dist, f.properties?.OWNER]);
+                });
+                currentData.infra.pipe.forEach(f => rows.push(["Pipeline", f.properties?.Pipename, "", "", f.properties?.Operator]));
+            }
+            const csv = rows.map(r => r.map(c => `"${(c||'').toString().replace(/"/g,'""')}"`).join(",")).join("\n");
+            const blob = new Blob([csv], {type:'text/csv'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = `TerraScan_${type}.csv`; a.click();
+            URL.revokeObjectURL(url);
+            showToast(`${type === 'env' ? 'Environmental' : 'Infrastructure'} CSV Exported`);
+        }
+
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.innerText = msg; t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 2500);
+        }
+    </script>
+</body>
+</html>
