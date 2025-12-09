@@ -345,7 +345,10 @@
                 <div class="layer-group-title">Environmental</div>
                 <div class="layer-toggle" data-layer="landuse"><div class="layer-checkbox c-env checked"></div><span class="layer-label">Land Use (NLCD)</span></div>
                 <div class="layer-toggle" data-layer="wetlands"><div class="layer-checkbox c-wet checked"></div><span class="layer-label">Wetlands (NWI)</span></div>
+                <div class="layer-toggle" data-layer="wetlands_mapright"><div class="layer-checkbox c-wet"></div><span class="layer-label">Wetlands (National)</span></div>
                 <div class="layer-toggle" data-layer="floodzone"><div class="layer-checkbox c-flood checked"></div><span class="layer-label">Flood Zones (FEMA)</span></div>
+                <div class="layer-toggle" data-layer="nflood_floodzones"><div class="layer-checkbox c-flood"></div><span class="layer-label">Flood Data (National)</span></div>
+                <div class="layer-toggle" data-layer="nfhl_flood"><div class="layer-checkbox c-flood"></div><span class="layer-label">Flood Hazard (NFHL)</span></div>
                 <div class="layer-toggle" data-layer="protected"><div class="layer-checkbox c-prot checked"></div><span class="layer-label">Protected Areas</span></div>
 
                 <div class="layer-group-title">Infrastructure</div>
@@ -480,6 +483,7 @@
             center: [-98.5, 39.5], zoom: 4
         });
         map.addControl(new maplibregl.NavigationControl(), 'top-right');
+        
         function setupAnalysisLayers() {
             // Add sources if missing
             ['buff_inf','buff_env','lyr_trans','lyr_sub','lyr_pipe','lyr_wet','lyr_flood','lyr_prot'].forEach(id => {
@@ -490,6 +494,39 @@
                     });
                 }
             });
+            
+            // National Flood Data tiles
+            if (!map.getSource('nflood_tiles')) {
+                map.addSource('nflood_tiles', {
+                    type: 'vector',
+                    tiles: [
+                        'https://api.nationalflooddata.com/v3/specialized/floodtiles1/{z}/{x}/{y}.pbf?x-api-key=cdXEOPkdCoiYUPQ4JN9f6VcpoNi3qxl8cGZRUbBi'
+                    ],
+                    minzoom: 0,
+                    maxzoom: 22
+                });
+            }
+            
+            // National Wetlands
+            if (!map.getSource('wetlands_mapright')) {
+                map.addSource('wetlands_mapright', {
+                    type: 'vector',
+                    tiles: [
+                        'https://a.tiles.mapbox.com/v4/mapright2.Wetlands_HI_20231027_1698423129,mapright2.Wetlands_AK3_20231030_1698732312,mapright2.Wetlands_3_20231030_1698776568,mapright2.Wetlands_AK1_20231030_1698702921,mapright2.Wetlands_AK2_20231030_1698730908,mapright2.Wetlands_1_20231107_1699493429,mapright2.Wetlands_2_20231107_1699449165,mapright2.Wetlands_Rip_20231113_1699903114/{z}/{x}/{y}.vector.pbf?access_token=pk.eyJ1IjoibWFwcmlnaHQyIiwiYSI6IkpMTE8tT0EifQ.BVYqz1Tp-th28TXPgg3rrQ',
+                        'https://b.tiles.mapbox.com/v4/mapright2.Wetlands_HI_20231027_1698423129,mapright2.Wetlands_AK3_20231030_1698732312,mapright2.Wetlands_3_20231030_1698776568,mapright2.Wetlands_AK1_20231030_1698702921,mapright2.Wetlands_AK2_20231030_1698730908,mapright2.Wetlands_1_20231107_1699493429,mapright2.Wetlands_2_20231107_1699449165,mapright2.Wetlands_Rip_20231113_1699903114/{z}/{x}/{y}.vector.pbf?access_token=pk.eyJ1IjoibWFwcmlnaHQyIiwiYSI6IkpMTE8tT0EifQ.BVYqz1Tp-th28TXPgg3rrQ'
+                    ],
+                    minzoom: 12,
+                    maxzoom: 14
+                });
+            }
+            
+            // NFHL Flood source (will be populated on query)
+            if (!map.getSource('nfhl_flood')) {
+                map.addSource('nfhl_flood', {
+                    type: 'geojson',
+                    data: { type: 'FeatureCollection', features: [] }
+                });
+            }
 
             // Add layers if missing
             if (!map.getLayer('fill_buff_inf')) {
@@ -553,6 +590,64 @@
                         'circle-stroke-width': 1,
                         'circle-stroke-color': '#fff'
                     } 
+                });
+            }
+            
+            // National Flood Data overlay (default hidden)
+            if (!map.getLayer('nflood_floodzones')) {
+                map.addLayer({
+                    id: 'nflood_floodzones',
+                    type: 'fill',
+                    source: 'nflood_tiles',
+                    'source-layer': 'default',
+                    paint: {
+                        'fill-color': '#f97316',
+                        'fill-opacity': 0.35
+                    },
+                    layout: { 'visibility': 'none' }
+                });
+            }
+
+            // National Wetlands overlays (default hidden)
+            const MAPRIGHT_WETLAND_LAYERS = [
+                'Wetlands_HI_20231027_1698423063.5217037',
+                'Wetlands_AK3_20231030_1698731010.392679',
+                'Wetlands_3_20231030_1698768698.5538049',
+                'Wetlands_AK1_20231030_1698701662.3827837',
+                'Wetlands_AK2_20231030_1698730585.397208',
+                'Wetlands_1_20231107_1699472081.0077796',
+                'Wetlands_2_20231107_1699427262.9916897',
+                'Wetlands_Rip_20231113_1699902696.01962'
+            ];
+
+            MAPRIGHT_WETLAND_LAYERS.forEach((srcLayerId, idx) => {
+                const layerId = `wetlands_mapright_${idx}`;
+                if (!map.getLayer(layerId)) {
+                    map.addLayer({
+                        id: layerId,
+                        type: 'fill',
+                        source: 'wetlands_mapright',
+                        'source-layer': srcLayerId,
+                        paint: {
+                            'fill-color': '#3b82f6',
+                            'fill-opacity': 0.35
+                        },
+                        layout: { 'visibility': 'none' }
+                    }, 'd_wet');
+                }
+            });
+            
+            // NFHL Flood layer (default hidden)
+            if (!map.getLayer('nfhl_flood')) {
+                map.addLayer({
+                    id: 'nfhl_flood',
+                    type: 'fill',
+                    source: 'nfhl_flood',
+                    paint: {
+                        'fill-color': '#fb923c',
+                        'fill-opacity': 0.4
+                    },
+                    layout: { 'visibility': 'none' }
                 });
             }
         }
@@ -619,7 +714,6 @@
             // Wait for the new style to be ready, then re-attach analysis layers + data
             const handleStyleData = () => {
                 if (!map.isStyleLoaded()) {
-                    // styledata can fire before isStyleLoaded() is true; keep polling briefly
                     setTimeout(handleStyleData, 50);
                     return;
                 }
@@ -627,7 +721,6 @@
                 map.setCenter(center);
                 map.setZoom(zoom);
 
-                // Rebuild analysis sources/layers and restore any existing analysis
                 setupAnalysisLayers();
                 restoreAnalysisData();
             };
@@ -646,6 +739,7 @@
         const SERVICE_URLS = {
             wetlands: 'https://fwspublicservices.wim.usgs.gov/wetlandsmapservice/rest/services/Wetlands/MapServer/0/query',
             flood: 'https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/USA_Flood_Hazard_Reduced_Set_gdb/FeatureServer/0/query',
+            nfhl_flood: 'https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query',
             protected: 'https://services.arcgis.com/v01gqwM5QqNysAAi/arcgis/rest/services/Manager_Name/FeatureServer/0/query',
             trans: 'https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/US_Electric_Power_Transmission_Lines/FeatureServer/0/query',
             subs: 'https://services6.arcgis.com/OO2s4OoyCZkYJ6oE/arcgis/rest/services/Substations/FeatureServer/0/query',
@@ -684,13 +778,13 @@
         }
 
         const voltageColors = {
-            1: '#6366f1',  // <100 kV - indigo
-            2: '#8b5cf6',  // 100-161 kV - violet
-            3: '#22d3ee',  // 220-287 kV - cyan
-            4: '#4ade80',  // 345 kV - green
-            5: '#facc15',  // 500 kV - yellow
-            6: '#fb923c',  // 735+ kV - orange
-            7: '#f472b6'   // DC - pink
+            1: '#6366f1',
+            2: '#8b5cf6',
+            3: '#22d3ee',
+            4: '#4ade80',
+            5: '#facc15',
+            6: '#fb923c',
+            7: '#f472b6'
         };
 
         // === MAP LAYERS INIT ===
@@ -698,6 +792,7 @@
         map.on('load', () => {
             setupAnalysisLayers();
         });
+        
         // === UI HANDLERS ===
         document.getElementById('slider-infra').addEventListener('input', e => {
             radInfra = parseFloat(e.target.value);
@@ -740,9 +835,43 @@
                 }
 
                 cb.classList.toggle('checked');
-                const mapLyrId = { 'wetlands': 'd_wet', 'floodzone': 'd_flood', 'protected': 'd_prot', 'transmission': 'd_trans', 'substations': 'd_sub', 'pipelines': 'd_pipe' }[t.dataset.layer];
-                if(mapLyrId && map.getLayer(mapLyrId)) {
-                    map.setLayoutProperty(mapLyrId, 'visibility', cb.classList.contains('checked') ? 'visible' : 'none');
+                const layerName = t.dataset.layer;
+                
+                // Handle the new layers
+                if (layerName === 'wetlands_mapright') {
+                    // Toggle all 8 wetlands_mapright layers
+                    const visibility = cb.classList.contains('checked') ? 'visible' : 'none';
+                    for (let i = 0; i < 8; i++) {
+                        const lyrId = `wetlands_mapright_${i}`;
+                        if (map.getLayer(lyrId)) {
+                            map.setLayoutProperty(lyrId, 'visibility', visibility);
+                        }
+                    }
+                } else if (layerName === 'nflood_floodzones') {
+                    if (map.getLayer('nflood_floodzones')) {
+                        map.setLayoutProperty('nflood_floodzones', 'visibility', 
+                            cb.classList.contains('checked') ? 'visible' : 'none');
+                    }
+                } else if (layerName === 'nfhl_flood') {
+                    if (map.getLayer('nfhl_flood')) {
+                        map.setLayoutProperty('nfhl_flood', 'visibility', 
+                            cb.classList.contains('checked') ? 'visible' : 'none');
+                    }
+                } else {
+                    // Handle existing layers
+                    const mapLyrId = { 
+                        'wetlands': 'd_wet', 
+                        'floodzone': 'd_flood', 
+                        'protected': 'd_prot', 
+                        'transmission': 'd_trans', 
+                        'substations': 'd_sub', 
+                        'pipelines': 'd_pipe' 
+                    }[layerName];
+                    
+                    if(mapLyrId && map.getLayer(mapLyrId)) {
+                        map.setLayoutProperty(mapLyrId, 'visibility', 
+                            cb.classList.contains('checked') ? 'visible' : 'none');
+                    }
                 }
             });
         });
@@ -812,14 +941,15 @@
                 const bboxEnv = turf.bbox(buffEnv);
                 const bboxInf = turf.bbox(buffInfra);
                 
-                const [wet, flood, prot, land, trans, sub, pipe] = await Promise.all([
+                const [wet, flood, prot, land, trans, sub, pipe, nfhlFlood] = await Promise.all([
                     queryEsri(SERVICE_URLS.wetlands, bboxEnv),
                     queryEsri(SERVICE_URLS.flood, bboxEnv),
                     queryEsri(SERVICE_URLS.protected, bboxEnv),
                     sampleNLCD(lng, lat),
                     queryEsri(SERVICE_URLS.trans, bboxInf),
                     queryEsri(SERVICE_URLS.subs, bboxInf),
-                    queryEsri(SERVICE_URLS.pipe, bboxInf)
+                    queryEsri(SERVICE_URLS.pipe, bboxInf),
+                    queryEsri(SERVICE_URLS.nfhl_flood, bboxEnv)
                 ]);
 
                 const safeIntersects = (f, geom) => {
@@ -858,6 +988,10 @@
                 map.getSource('lyr_trans').setData({type:'FeatureCollection', features: currentData.infra.trans});
                 map.getSource('lyr_sub').setData({type:'FeatureCollection', features: currentData.infra.subs});
                 map.getSource('lyr_pipe').setData({type:'FeatureCollection', features: currentData.infra.pipe});
+                
+                // Update NFHL flood source
+                const nfhlFiltered = nfhlFlood.filter(f => safeIntersects(f, buffEnv));
+                map.getSource('nfhl_flood').setData({type:'FeatureCollection', features: nfhlFiltered});
 
                 updateStats();
                 renderResultsList();
@@ -1195,4 +1329,5 @@
     </script>
 </body>
 </html>
+
 
