@@ -146,6 +146,93 @@
         .c-flood { color: var(--accent-amber); border-color: var(--accent-amber); }
         .c-prot { color: var(--accent-violet); border-color: var(--accent-violet); }
         .c-wet { color: #3b82f6; border-color: #3b82f6; }
+        .c-crithab { color: #dc2626; border-color: #dc2626; }
+        .c-crithab-prop { color: #f472b6; border-color: #f472b6; }
+        .c-solar { color: #fbbf24; border-color: #fbbf24; }
+
+        /* Fatal Flaw Styles */
+        .fatal-flaw-banner {
+            background: linear-gradient(135deg, #991b1b 0%, #dc2626 100%);
+            border: 2px solid #f87171;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin: 10px 0;
+            display: none;
+        }
+        .fatal-flaw-banner.active { display: block; }
+        .fatal-flaw-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .fatal-flaw-list {
+            font-size: 11px;
+            color: #fecaca;
+            line-height: 1.5;
+        }
+        .fatal-flaw-item {
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .fatal-flaw-item:last-child { border-bottom: none; }
+        
+        .warning-banner {
+            background: linear-gradient(135deg, #92400e 0%, #f59e0b 100%);
+            border: 2px solid #fbbf24;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin: 10px 0;
+            display: none;
+        }
+        .warning-banner.active { display: block; }
+        .warning-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .warning-list {
+            font-size: 11px;
+            color: #fef3c7;
+            line-height: 1.5;
+        }
+
+        .site-score {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            padding: 12px;
+            margin: 10px 0;
+            text-align: center;
+        }
+        .site-score-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+        .site-score-value {
+            font-size: 28px;
+            font-weight: 700;
+            font-family: 'IBM Plex Mono', monospace;
+        }
+        .site-score-rating {
+            font-size: 11px;
+            font-weight: 600;
+            margin-top: 4px;
+        }
+        .score-fatal { color: #ef4444; }
+        .score-poor { color: #f97316; }
+        .score-fair { color: #eab308; }
+        .score-good { color: #22c55e; }
+        .score-excellent { color: #06b6d4; }
 
         .layer-label { font-size: 12px; color: var(--text-secondary); }
         
@@ -350,6 +437,11 @@
                 <div class="layer-toggle" data-layer="nflood_floodzones"><div class="layer-checkbox c-flood"></div><span class="layer-label">Flood Data (National)</span></div>
                 <div class="layer-toggle" data-layer="nfhl_flood"><div class="layer-checkbox c-flood"></div><span class="layer-label">Flood Hazard (NFHL)</span></div>
                 <div class="layer-toggle" data-layer="protected"><div class="layer-checkbox c-prot checked"></div><span class="layer-label">Protected Areas</span></div>
+                <div class="layer-toggle" data-layer="crithab_final"><div class="layer-checkbox c-crithab checked"></div><span class="layer-label">Critical Habitat (Final)</span></div>
+                <div class="layer-toggle" data-layer="crithab_proposed"><div class="layer-checkbox c-crithab-prop"></div><span class="layer-label">Critical Habitat (Proposed)</span></div>
+
+                <div class="layer-group-title">Solar Resource</div>
+                <div class="layer-toggle" data-layer="solar_ghi"><div class="layer-checkbox c-solar checked"></div><span class="layer-label">Solar Irradiance (GHI)</span></div>
 
                 <div class="layer-group-title">Infrastructure</div>
                 <div class="layer-toggle" data-layer="transmission"><div class="layer-checkbox c-infra checked"></div><span class="layer-label">Transmission Lines</span></div>
@@ -385,6 +477,8 @@
                 <div class="legend-item"><div class="l-box" style="background:#3b82f6"></div> Wetlands</div>
                 <div class="legend-item"><div class="l-box" style="background:#f59e0b"></div> Flood Zones</div>
                 <div class="legend-item"><div class="l-box" style="background:#8b5cf6"></div> Protected Areas</div>
+                <div class="legend-item"><div class="l-box" style="background:#dc2626"></div> Critical Habitat (Final)</div>
+                <div class="legend-item"><div class="l-box" style="background:#f472b6"></div> Critical Habitat (Proposed)</div>
             </div>
         </div>
 
@@ -433,11 +527,41 @@
                         <div class="stat-label">Wetlands</div>
                         <div class="stat-value" id="stat-wet-count">0</div>
                     </div>
+                    <div class="stat-card" style="border-color: #dc2626;">
+                        <div class="stat-label">Critical Habitat</div>
+                        <div class="stat-value" id="stat-crithab-count">0</div>
+                        <div class="stat-subtext" id="stat-crithab-status"></div>
+                    </div>
+                    <div class="stat-card" style="border-color: #fbbf24;">
+                        <div class="stat-label">Solar GHI</div>
+                        <div class="stat-value" id="stat-solar-ghi">--</div>
+                        <div class="stat-subtext" id="stat-solar-rating"></div>
+                    </div>
+                </div>
+
+                <!-- Fatal Flaws Banner -->
+                <div class="fatal-flaw-banner" id="fatal-flaw-banner">
+                    <div class="fatal-flaw-title">🚫 FATAL FLAWS DETECTED</div>
+                    <div class="fatal-flaw-list" id="fatal-flaw-list"></div>
+                </div>
+
+                <!-- Warnings Banner -->
+                <div class="warning-banner" id="warning-banner">
+                    <div class="warning-title">⚠️ SIGNIFICANT CONCERNS</div>
+                    <div class="warning-list" id="warning-list"></div>
+                </div>
+
+                <!-- Site Score -->
+                <div class="site-score" id="site-score-container">
+                    <div class="site-score-label">Site Feasibility Score</div>
+                    <div class="site-score-value" id="site-score-value">--</div>
+                    <div class="site-score-rating" id="site-score-rating"></div>
                 </div>
 
                 <div class="tabs-row">
                     <button class="tab-btn active" data-target="infra">Infrastructure Details</button>
                     <button class="tab-btn" data-target="env">Environmental Details</button>
+                    <button class="tab-btn" data-target="protected">Protected Lands</button>
                 </div>
 
                 <div class="results-body">
@@ -486,7 +610,7 @@
         
         function setupAnalysisLayers() {
             // Add sources if missing
-            ['buff_inf','buff_env','lyr_trans','lyr_sub','lyr_pipe','lyr_wet','lyr_flood','lyr_prot'].forEach(id => {
+            ['buff_inf','buff_env','lyr_trans','lyr_sub','lyr_pipe','lyr_wet','lyr_flood','lyr_prot','lyr_crithab_final','lyr_crithab_proposed'].forEach(id => {
                 if (!map.getSource(id)) {
                     map.addSource(id, {
                         type: 'geojson',
@@ -557,6 +681,24 @@
             if (!map.getLayer('d_prot')) {
                 map.addLayer({ id: 'd_prot', type: 'fill', source: 'lyr_prot',
                     paint: { 'fill-color': '#8b5cf6', 'fill-opacity': 0.3 } });
+            }
+            if (!map.getLayer('d_crithab_final')) {
+                map.addLayer({ id: 'd_crithab_final', type: 'fill', source: 'lyr_crithab_final',
+                    paint: { 'fill-color': '#dc2626', 'fill-opacity': 0.4 } });
+            }
+            if (!map.getLayer('d_crithab_final_line')) {
+                map.addLayer({ id: 'd_crithab_final_line', type: 'line', source: 'lyr_crithab_final',
+                    paint: { 'line-color': '#991b1b', 'line-width': 2 } });
+            }
+            if (!map.getLayer('d_crithab_proposed')) {
+                map.addLayer({ id: 'd_crithab_proposed', type: 'fill', source: 'lyr_crithab_proposed',
+                    paint: { 'fill-color': '#f472b6', 'fill-opacity': 0.35 },
+                    layout: { 'visibility': 'none' } });
+            }
+            if (!map.getLayer('d_crithab_proposed_line')) {
+                map.addLayer({ id: 'd_crithab_proposed_line', type: 'line', source: 'lyr_crithab_proposed',
+                    paint: { 'line-color': '#db2777', 'line-width': 2, 'line-dasharray': [4, 2] },
+                    layout: { 'visibility': 'none' } });
             }
             if (!map.getLayer('d_pipe')) {
                 map.addLayer({ id: 'd_pipe', type: 'line', source: 'lyr_pipe',
@@ -674,6 +816,18 @@
                     features: currentData.env.protected
                 });
             }
+            if (map.getSource('lyr_crithab_final')) {
+                map.getSource('lyr_crithab_final').setData({
+                    type: 'FeatureCollection',
+                    features: currentData.env.crithabFinal
+                });
+            }
+            if (map.getSource('lyr_crithab_proposed')) {
+                map.getSource('lyr_crithab_proposed').setData({
+                    type: 'FeatureCollection',
+                    features: currentData.env.crithabProposed
+                });
+            }
             if (map.getSource('lyr_trans')) {
                 map.getSource('lyr_trans').setData({
                     type: 'FeatureCollection',
@@ -741,10 +895,22 @@
             flood: 'https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/USA_Flood_Hazard_Reduced_Set_gdb/FeatureServer/0/query',
             nfhl_flood: 'https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query',
             protected: 'https://services.arcgis.com/v01gqwM5QqNysAAi/arcgis/rest/services/Manager_Name/FeatureServer/0/query',
+            crithab_final_poly: 'https://services.arcgis.com/QVENGdaPbd4LUkLV/ArcGIS/rest/services/USFWS_Critical_Habitat/FeatureServer/0/query',
+            crithab_final_line: 'https://services.arcgis.com/QVENGdaPbd4LUkLV/ArcGIS/rest/services/USFWS_Critical_Habitat/FeatureServer/1/query',
+            crithab_proposed_poly: 'https://services.arcgis.com/QVENGdaPbd4LUkLV/ArcGIS/rest/services/USFWS_Critical_Habitat/FeatureServer/2/query',
+            crithab_proposed_line: 'https://services.arcgis.com/QVENGdaPbd4LUkLV/ArcGIS/rest/services/USFWS_Critical_Habitat/FeatureServer/3/query',
             trans: 'https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/US_Electric_Power_Transmission_Lines/FeatureServer/0/query',
             subs: 'https://services6.arcgis.com/OO2s4OoyCZkYJ6oE/arcgis/rest/services/Substations/FeatureServer/0/query',
-            pipe: 'https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/Natural_Gas_Interstate_and_Intrastate_Pipelines_1/FeatureServer/0/query'
+            pipe: 'https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/Natural_Gas_Interstate_and_Intrastate_Pipelines_1/FeatureServer/0/query',
+            solar: 'https://developer.nrel.gov/api/solar/solar_resource/v1.json'
         };
+
+        const NREL_API_KEY = 'zXdbmYJ49pr7aQkN1WktVYVPASCDQRQZykTFa3pd';
+
+        // Fatal flaw definitions
+        const FATAL_FLOOD_ZONES = ['A', 'AE', 'AH', 'AO', 'V', 'VE', 'AR'];
+        const FATAL_PROTECTED_TYPES = ['Wilderness', 'National Park', 'National Monument', 'Wildlife Refuge', 'Wild and Scenic River', 'Marine Protected Area'];
+        const HIGH_RISK_WETLAND_ACRES = 3;
 
         const NLCD_CLASSES = { 11:'Water', 21:'Developed Open', 22:'Developed Low', 23:'Developed Med', 24:'Developed High', 31:'Barren', 41:'Forest Decid', 42:'Forest Everg', 43:'Forest Mix', 52:'Shrub', 71:'Grassland', 81:'Pasture', 82:'Crops', 90:'Wetlands Woody', 95:'Wetlands Herb' };
 
@@ -857,6 +1023,22 @@
                         map.setLayoutProperty('nfhl_flood', 'visibility', 
                             cb.classList.contains('checked') ? 'visible' : 'none');
                     }
+                } else if (layerName === 'crithab_final') {
+                    const visibility = cb.classList.contains('checked') ? 'visible' : 'none';
+                    if (map.getLayer('d_crithab_final')) {
+                        map.setLayoutProperty('d_crithab_final', 'visibility', visibility);
+                    }
+                    if (map.getLayer('d_crithab_final_line')) {
+                        map.setLayoutProperty('d_crithab_final_line', 'visibility', visibility);
+                    }
+                } else if (layerName === 'crithab_proposed') {
+                    const visibility = cb.classList.contains('checked') ? 'visible' : 'none';
+                    if (map.getLayer('d_crithab_proposed')) {
+                        map.setLayoutProperty('d_crithab_proposed', 'visibility', visibility);
+                    }
+                    if (map.getLayer('d_crithab_proposed_line')) {
+                        map.setLayoutProperty('d_crithab_proposed_line', 'visibility', visibility);
+                    }
                 } else {
                     // Handle existing layers
                     const mapLyrId = { 
@@ -941,7 +1123,7 @@
                 const bboxEnv = turf.bbox(buffEnv);
                 const bboxInf = turf.bbox(buffInfra);
                 
-                const [wet, flood, prot, land, trans, sub, pipe, nfhlFlood] = await Promise.all([
+                const [wet, flood, prot, land, trans, sub, pipe, nfhlFlood, crithabFinalPoly, crithabFinalLine, crithabProposedPoly, crithabProposedLine, solarData] = await Promise.all([
                     queryEsri(SERVICE_URLS.wetlands, bboxEnv),
                     queryEsri(SERVICE_URLS.flood, bboxEnv),
                     queryEsri(SERVICE_URLS.protected, bboxEnv),
@@ -949,7 +1131,12 @@
                     queryEsri(SERVICE_URLS.trans, bboxInf),
                     queryEsri(SERVICE_URLS.subs, bboxInf),
                     queryEsri(SERVICE_URLS.pipe, bboxInf),
-                    queryEsri(SERVICE_URLS.nfhl_flood, bboxEnv)
+                    queryEsri(SERVICE_URLS.nfhl_flood, bboxEnv),
+                    queryEsri(SERVICE_URLS.crithab_final_poly, bboxEnv),
+                    queryEsri(SERVICE_URLS.crithab_final_line, bboxEnv),
+                    queryEsri(SERVICE_URLS.crithab_proposed_poly, bboxEnv),
+                    queryEsri(SERVICE_URLS.crithab_proposed_line, bboxEnv),
+                    querySolarResource(lng, lat)
                 ]);
 
                 const safeIntersects = (f, geom) => {
@@ -966,6 +1153,8 @@
                         wetlands: wet.filter(f => safeIntersects(f, buffEnv)),
                         flood: flood.filter(f => safeIntersects(f, buffEnv)),
                         protected: prot.filter(f => safeIntersects(f, buffEnv)),
+                        crithabFinal: [...crithabFinalPoly, ...crithabFinalLine].filter(f => safeIntersects(f, buffEnv)).map(f => ({...f, properties: {...f.properties, status: 'Final'}})),
+                        crithabProposed: [...crithabProposedPoly, ...crithabProposedLine].filter(f => safeIntersects(f, buffEnv)).map(f => ({...f, properties: {...f.properties, status: 'Proposed'}})),
                         landuse: land
                     },
                     infra: {
@@ -979,12 +1168,15 @@
                         })),
                         subs: sub.filter(f => safePointInPoly(f, buffInfra) || (f.geometry && turf.distance(turf.point([lng,lat]), f, {units:'miles'}) <= radInfra)),
                         pipe: pipe.filter(f => safeIntersects(f, buffInfra))
-                    }
+                    },
+                    solar: solarData
                 };
 
                 map.getSource('lyr_wet').setData({type:'FeatureCollection', features: currentData.env.wetlands});
                 map.getSource('lyr_flood').setData({type:'FeatureCollection', features: currentData.env.flood});
                 map.getSource('lyr_prot').setData({type:'FeatureCollection', features: currentData.env.protected});
+                map.getSource('lyr_crithab_final').setData({type:'FeatureCollection', features: currentData.env.crithabFinal});
+                map.getSource('lyr_crithab_proposed').setData({type:'FeatureCollection', features: currentData.env.crithabProposed});
                 map.getSource('lyr_trans').setData({type:'FeatureCollection', features: currentData.infra.trans});
                 map.getSource('lyr_sub').setData({type:'FeatureCollection', features: currentData.infra.subs});
                 map.getSource('lyr_pipe').setData({type:'FeatureCollection', features: currentData.infra.pipe});
@@ -1033,6 +1225,171 @@
                 const d = await r.json();
                 return NLCD_CLASSES[d.value] || "Unknown";
             } catch { return "Unknown"; }
+        }
+
+        async function querySolarResource(lng, lat) {
+            try {
+                const r = await fetch(`${SERVICE_URLS.solar}?api_key=${NREL_API_KEY}&lat=${lat}&lon=${lng}`);
+                const d = await r.json();
+                if(d.outputs) {
+                    return {
+                        ghi: d.outputs.avg_ghi?.annual || null,
+                        dni: d.outputs.avg_dni?.annual || null,
+                        tilt: d.outputs.avg_lat_tilt?.annual || null
+                    };
+                }
+                return { ghi: null, dni: null, tilt: null };
+            } catch { return { ghi: null, dni: null, tilt: null }; }
+        }
+
+        function getSolarRating(ghi) {
+            if(!ghi) return { rating: 'Unknown', color: '#6b7280' };
+            if(ghi >= 5.5) return { rating: 'Excellent', color: '#06b6d4' };
+            if(ghi >= 5.0) return { rating: 'Very Good', color: '#22c55e' };
+            if(ghi >= 4.5) return { rating: 'Good', color: '#84cc16' };
+            if(ghi >= 4.0) return { rating: 'Fair', color: '#eab308' };
+            if(ghi >= 3.5) return { rating: 'Poor', color: '#f97316' };
+            return { rating: 'Very Poor', color: '#ef4444' };
+        }
+
+        function analyzeFatalFlaws() {
+            const flaws = [];
+            const warnings = [];
+            const pt = turf.point([lastCoords.lng, lastCoords.lat]);
+            
+            // Check Critical Habitat (Final) - FATAL if point inside
+            currentData.env.crithabFinal.forEach(f => {
+                try {
+                    if(f.geometry && f.geometry.type && f.geometry.type.includes('Polygon') && turf.booleanPointInPolygon(pt, f)) {
+                        flaws.push(`Point inside Final Critical Habitat for ${f.properties?.comname || 'protected species'} - ESA Section 7 consultation required`);
+                    }
+                } catch(e) {}
+            });
+            
+            // Check Critical Habitat (Proposed) - Warning if point inside
+            currentData.env.crithabProposed.forEach(f => {
+                try {
+                    if(f.geometry && f.geometry.type && f.geometry.type.includes('Polygon') && turf.booleanPointInPolygon(pt, f)) {
+                        warnings.push(`Point inside Proposed Critical Habitat for ${f.properties?.comname || 'species'} - likely to become Final`);
+                    }
+                } catch(e) {}
+            });
+            
+            // Check Flood Zones - FATAL for high-risk zones
+            currentData.env.flood.forEach(f => {
+                try {
+                    if(turf.booleanPointInPolygon(pt, f)) {
+                        const zone = f.properties?.FLD_ZONE;
+                        if(FATAL_FLOOD_ZONES.includes(zone)) {
+                            flaws.push(`Point inside ${zone} Flood Zone (${getFloodZoneDesc(zone)}) - uninsurable for data center`);
+                        }
+                    }
+                } catch(e) {}
+            });
+            
+            // Check Protected Areas - FATAL for certain types
+            currentData.env.protected.forEach(f => {
+                try {
+                    if(f.geometry && f.geometry.type && f.geometry.type.includes('Polygon') && turf.booleanPointInPolygon(pt, f)) {
+                        const designation = f.properties?.Des_Tp || f.properties?.Mang_Name || '';
+                        const name = f.properties?.Unit_Nm || 'Protected Area';
+                        const isFatal = FATAL_PROTECTED_TYPES.some(t => designation.toLowerCase().includes(t.toLowerCase()) || name.toLowerCase().includes(t.toLowerCase()));
+                        if(isFatal) {
+                            flaws.push(`Point inside ${name} (${designation}) - development prohibited`);
+                        } else {
+                            warnings.push(`Point inside ${name} - may have development restrictions`);
+                        }
+                    }
+                } catch(e) {}
+            });
+            
+            // Check Wetlands - Warning for large wetland areas
+            let totalWetlandAcres = 0;
+            currentData.env.wetlands.forEach(f => {
+                totalWetlandAcres += parseFloat(f.properties?.ACRES || 0);
+            });
+            if(totalWetlandAcres > HIGH_RISK_WETLAND_ACRES) {
+                warnings.push(`${totalWetlandAcres.toFixed(1)} acres of wetlands nearby - Individual 404 permit likely required (12-24 months, $500K+ mitigation)`);
+            } else if(totalWetlandAcres > 0.5) {
+                warnings.push(`${totalWetlandAcres.toFixed(1)} acres of wetlands nearby - Section 404 permit required`);
+            }
+            
+            // Check Transmission Distance - FATAL if too far
+            let nearestTransDist = Infinity;
+            currentData.infra.trans.forEach(f => {
+                try {
+                    if(f.geometry) {
+                        const n = turf.nearestPointOnLine(f, pt, {units:'miles'});
+                        if(n.properties.dist < nearestTransDist) nearestTransDist = n.properties.dist;
+                    }
+                } catch(e) {}
+            });
+            if(nearestTransDist > 15) {
+                flaws.push(`No transmission lines within 15 miles (nearest: ${nearestTransDist.toFixed(1)} mi) - interconnection likely uneconomic`);
+            } else if(nearestTransDist > 10) {
+                warnings.push(`Transmission lines ${nearestTransDist.toFixed(1)} miles away - significant gen-tie costs ($15-40M+)`);
+            } else if(nearestTransDist > 5) {
+                warnings.push(`Transmission lines ${nearestTransDist.toFixed(1)} miles away - moderate gen-tie costs ($5-15M)`);
+            }
+            
+            // Check Substation Distance - FATAL if too far
+            let nearestSubDist = Infinity;
+            currentData.infra.subs.forEach(f => {
+                if(f.geometry) {
+                    const d = turf.distance(pt, f, {units:'miles'});
+                    if(d < nearestSubDist) nearestSubDist = d;
+                }
+            });
+            if(nearestSubDist > 25) {
+                flaws.push(`No substations within 25 miles (nearest: ${nearestSubDist.toFixed(1)} mi) - new substation required ($20-100M+)`);
+            } else if(nearestSubDist > 15) {
+                warnings.push(`Nearest substation ${nearestSubDist.toFixed(1)} miles away - may need significant infrastructure investment`);
+            }
+            
+            // Check Solar Resource for solar projects
+            if(currentData.solar?.ghi && currentData.solar.ghi < 4.0) {
+                warnings.push(`Low solar resource (GHI: ${currentData.solar.ghi.toFixed(2)} kWh/m²/day) - challenging economics for solar`);
+            }
+            
+            return { flaws, warnings };
+        }
+
+        function calculateSiteScore() {
+            const { flaws, warnings } = analyzeFatalFlaws();
+            
+            // If fatal flaws exist, score is 0
+            if(flaws.length > 0) return { score: 0, rating: 'FATAL FLAWS', colorClass: 'score-fatal' };
+            
+            let score = 100;
+            
+            // Deduct for warnings
+            score -= warnings.length * 10;
+            
+            // Deduct for environmental constraints
+            if(currentData.env.crithabFinal.length > 0) score -= 15;
+            if(currentData.env.crithabProposed.length > 0) score -= 10;
+            if(currentData.env.wetlands.length > 5) score -= 10;
+            else if(currentData.env.wetlands.length > 0) score -= 5;
+            if(currentData.env.flood.length > 0) score -= 10;
+            if(currentData.env.protected.length > 0) score -= 10;
+            
+            // Bonus for good infrastructure
+            if(currentData.infra.trans.length > 3) score += 5;
+            if(currentData.infra.subs.length > 0) score += 5;
+            
+            // Bonus for good solar
+            if(currentData.solar?.ghi >= 5.5) score += 10;
+            else if(currentData.solar?.ghi >= 5.0) score += 5;
+            
+            score = Math.max(0, Math.min(100, score));
+            
+            let rating, colorClass;
+            if(score >= 80) { rating = 'Excellent'; colorClass = 'score-excellent'; }
+            else if(score >= 60) { rating = 'Good'; colorClass = 'score-good'; }
+            else if(score >= 40) { rating = 'Fair'; colorClass = 'score-fair'; }
+            else { rating = 'Poor'; colorClass = 'score-poor'; }
+            
+            return { score, rating, colorClass };
         }
 
         // === STATS ===
@@ -1092,6 +1449,68 @@
 
             // Wetlands
             document.getElementById('stat-wet-count').innerText = currentData.env.wetlands.length;
+
+            // Critical Habitat
+            const crithabTotal = currentData.env.crithabFinal.length + currentData.env.crithabProposed.length;
+            document.getElementById('stat-crithab-count').innerText = crithabTotal;
+            const pt2 = turf.point([lastCoords.lng, lastCoords.lat]);
+            let inCritHab = false;
+            let critHabSpecies = [];
+            [...currentData.env.crithabFinal, ...currentData.env.crithabProposed].forEach(f => {
+                try {
+                    if(f.geometry && f.geometry.type && f.geometry.type.includes('Polygon') && turf.booleanPointInPolygon(pt2, f)) {
+                        inCritHab = true;
+                        if(f.properties?.comname) critHabSpecies.push(f.properties.comname);
+                    }
+                } catch(e) {}
+            });
+            if(inCritHab) {
+                document.getElementById('stat-crithab-status').innerText = critHabSpecies.length > 0 ? critHabSpecies[0] : 'POINT INSIDE';
+                document.getElementById('stat-crithab-count').style.color = '#dc2626';
+            } else {
+                document.getElementById('stat-crithab-status').innerText = crithabTotal > 0 ? 'nearby' : '';
+                document.getElementById('stat-crithab-count').style.color = 'inherit';
+            }
+
+            // Solar Resource
+            if(currentData.solar?.ghi) {
+                const solarRating = getSolarRating(currentData.solar.ghi);
+                document.getElementById('stat-solar-ghi').innerText = currentData.solar.ghi.toFixed(2);
+                document.getElementById('stat-solar-ghi').style.color = solarRating.color;
+                document.getElementById('stat-solar-rating').innerText = solarRating.rating;
+                document.getElementById('stat-solar-rating').style.color = solarRating.color;
+            } else {
+                document.getElementById('stat-solar-ghi').innerText = '--';
+                document.getElementById('stat-solar-rating').innerText = '';
+            }
+
+            // Fatal Flaws and Warnings
+            const { flaws, warnings } = analyzeFatalFlaws();
+            
+            const fatalBanner = document.getElementById('fatal-flaw-banner');
+            const fatalList = document.getElementById('fatal-flaw-list');
+            if(flaws.length > 0) {
+                fatalList.innerHTML = flaws.map(f => `<div class="fatal-flaw-item">• ${f}</div>`).join('');
+                fatalBanner.classList.add('active');
+            } else {
+                fatalBanner.classList.remove('active');
+            }
+
+            const warningBanner = document.getElementById('warning-banner');
+            const warningList = document.getElementById('warning-list');
+            if(warnings.length > 0) {
+                warningList.innerHTML = warnings.map(w => `<div class="fatal-flaw-item">• ${w}</div>`).join('');
+                warningBanner.classList.add('active');
+            } else {
+                warningBanner.classList.remove('active');
+            }
+
+            // Site Score
+            const { score, rating, colorClass } = calculateSiteScore();
+            document.getElementById('site-score-value').innerText = score;
+            document.getElementById('site-score-value').className = `site-score-value ${colorClass}`;
+            document.getElementById('site-score-rating').innerText = rating;
+            document.getElementById('site-score-rating').className = `site-score-rating ${colorClass}`;
         }
 
         // === RENDER LIST ===
@@ -1130,7 +1549,7 @@
                     </div>`;
                 });
                 if(!container.innerHTML) container.innerHTML = `<div style="color:grey;padding:20px">No infrastructure found in ${radInfra} mi buffer.</div>`;
-            } else {
+            } else if(currentTab === 'env') {
                 currentData.env.flood.forEach(f => {
                     const p = f.properties || {};
                     const inZone = turf.booleanPointInPolygon(pt, f);
@@ -1148,14 +1567,50 @@
                         <div class="r-row"><span class="r-lbl">Acres</span><span class="r-val">${p.ACRES ? parseFloat(p.ACRES).toFixed(1) : ''}</span></div>
                     </div>`;
                 });
+                if(!container.innerHTML) container.innerHTML = `<div style="color:grey;padding:20px">No environmental features found in ${radEnv} mi buffer.</div>`;
+            } else if(currentTab === 'protected') {
+                // Protected Areas
                 currentData.env.protected.forEach(f => {
                     const p = f.properties || {};
+                    let inArea = false;
+                    try { if(f.geometry && f.geometry.type && f.geometry.type.includes('Polygon')) inArea = turf.booleanPointInPolygon(pt, f); } catch(e) {}
                     container.innerHTML += `<div class="r-item" style="border-left: 3px solid #8b5cf6;">
                         <div class="r-head">${p.Unit_Nm || 'Protected Area'}</div>
                         <div class="r-row"><span class="r-lbl">Manager</span><span class="r-val">${p.Mang_Name || 'N/A'}</span></div>
+                        <div class="r-row"><span class="r-lbl">Designation</span><span class="r-val">${p.Des_Tp || 'N/A'}</span></div>
+                        <div class="r-row"><span class="r-lbl">Point Inside?</span><span class="r-val" style="color:${inArea?'#8b5cf6':'inherit'}">${inArea ? 'YES' : 'No'}</span></div>
                     </div>`;
                 });
-                if(!container.innerHTML) container.innerHTML = `<div style="color:grey;padding:20px">No environmental features found in ${radEnv} mi buffer.</div>`;
+                
+                // Critical Habitat - Final
+                currentData.env.crithabFinal.forEach(f => {
+                    const p = f.properties || {};
+                    let inArea = false;
+                    try { if(f.geometry && f.geometry.type && f.geometry.type.includes('Polygon')) inArea = turf.booleanPointInPolygon(pt, f); } catch(e) {}
+                    container.innerHTML += `<div class="r-item" style="border-left: 3px solid #dc2626;">
+                        <div class="r-head">Critical Habitat (Final)</div>
+                        <div class="r-row"><span class="r-lbl">Species</span><span class="r-val">${p.comname || 'N/A'}</span></div>
+                        <div class="r-row"><span class="r-lbl">Scientific Name</span><span class="r-val">${p.sciname || 'N/A'}</span></div>
+                        <div class="r-row"><span class="r-lbl">Listing Status</span><span class="r-val">${p.listing_st || 'N/A'}</span></div>
+                        <div class="r-row"><span class="r-lbl">Point Inside?</span><span class="r-val" style="color:${inArea?'#dc2626':'inherit'}">${inArea ? 'YES' : 'No'}</span></div>
+                    </div>`;
+                });
+                
+                // Critical Habitat - Proposed
+                currentData.env.crithabProposed.forEach(f => {
+                    const p = f.properties || {};
+                    let inArea = false;
+                    try { if(f.geometry && f.geometry.type && f.geometry.type.includes('Polygon')) inArea = turf.booleanPointInPolygon(pt, f); } catch(e) {}
+                    container.innerHTML += `<div class="r-item" style="border-left: 3px solid #f472b6;">
+                        <div class="r-head">Critical Habitat (Proposed)</div>
+                        <div class="r-row"><span class="r-lbl">Species</span><span class="r-val">${p.comname || 'N/A'}</span></div>
+                        <div class="r-row"><span class="r-lbl">Scientific Name</span><span class="r-val">${p.sciname || 'N/A'}</span></div>
+                        <div class="r-row"><span class="r-lbl">Listing Status</span><span class="r-val">${p.listing_st || 'N/A'}</span></div>
+                        <div class="r-row"><span class="r-lbl">Point Inside?</span><span class="r-val" style="color:${inArea?'#f472b6':'inherit'}">${inArea ? 'YES' : 'No'}</span></div>
+                    </div>`;
+                });
+                
+                if(!container.innerHTML) container.innerHTML = `<div style="color:grey;padding:20px">No protected areas or critical habitat found in ${radEnv} mi buffer.</div>`;
             }
         }
 
@@ -1197,6 +1652,22 @@
                 }
             });
 
+            // Critical Habitat overlap check
+            let critHabOverlap = "No", critHabSpeciesAtPoint = "";
+            [...currentData.env.crithabFinal, ...currentData.env.crithabProposed].forEach(f => {
+                try { 
+                    if(f.geometry && f.geometry.type && f.geometry.type.includes('Polygon') && turf.booleanPointInPolygon(pt, f)) { 
+                        critHabOverlap = "YES"; 
+                        critHabSpeciesAtPoint = f.properties?.comname || "Unknown Species"; 
+                    } 
+                } catch(e){}
+            });
+
+            // Get fatal flaws and site score
+            const { flaws, warnings } = analyzeFatalFlaws();
+            const { score, rating } = calculateSiteScore();
+            const solarRating = getSolarRating(currentData.solar?.ghi);
+
             const summary = [
                 ["TERRASCAN ANALYSIS REPORT"], [],
                 ["Generated:", new Date().toISOString()],
@@ -1204,9 +1675,35 @@
                 ["Infrastructure Buffer:", `${radInfra} mi (${bufferShape})`],
                 ["Environmental Buffer:", `${radEnv} mi (${bufferShape})`],
                 [], ["═══════════════════════════════════════"],
+                ["SITE FEASIBILITY SCORE"], ["═══════════════════════════════════════"], [],
+                ["SCORE:", `${score}/100`],
+                ["RATING:", rating],
+                [], ["═══════════════════════════════════════"],
+                ["FATAL FLAWS"], ["═══════════════════════════════════════"], [],
+            ];
+            
+            if(flaws.length > 0) {
+                flaws.forEach(f => summary.push(["🚫 " + f]));
+            } else {
+                summary.push(["None detected"]);
+            }
+            
+            summary.push([], ["═══════════════════════════════════════"],
+                ["SIGNIFICANT CONCERNS"], ["═══════════════════════════════════════"], []);
+            
+            if(warnings.length > 0) {
+                warnings.forEach(w => summary.push(["⚠️ " + w]));
+            } else {
+                summary.push(["None detected"]);
+            }
+            
+            summary.push(
+                [], ["═══════════════════════════════════════"],
                 ["SITE RISK SUMMARY"], ["═══════════════════════════════════════"], [],
                 ["FLOOD ZONE OVERLAP:", floodOverlap],
                 ["Flood Zone at Point:", floodZoneAtPoint || "Not in flood zone"], [],
+                ["CRITICAL HABITAT OVERLAP:", critHabOverlap],
+                ["Species at Point:", critHabSpeciesAtPoint || "Not in critical habitat"], [],
                 ["NEAREST SUBSTATION:", nearestSubName],
                 ["  Distance:", nearestSubDist],
                 ["  Owner:", nearestSubOwner], [],
@@ -1214,17 +1711,25 @@
                 ["  Distance to Line:", maxVDist],
                 ["  Owner:", maxVOwner], [],
                 ["═══════════════════════════════════════"],
+                ["SOLAR RESOURCE"], ["═══════════════════════════════════════"], [],
+                ["Global Horizontal Irradiance (GHI):", currentData.solar?.ghi ? `${currentData.solar.ghi.toFixed(2)} kWh/m²/day` : "N/A"],
+                ["Direct Normal Irradiance (DNI):", currentData.solar?.dni ? `${currentData.solar.dni.toFixed(2)} kWh/m²/day` : "N/A"],
+                ["Tilt at Latitude:", currentData.solar?.tilt ? `${currentData.solar.tilt.toFixed(2)} kWh/m²/day` : "N/A"],
+                ["Solar Rating:", solarRating.rating], [],
+                ["═══════════════════════════════════════"],
                 ["ENVIRONMENTAL SUMMARY"], ["═══════════════════════════════════════"], [],
                 ["Dominant Land Use:", currentData.env.landuse],
                 ["Total Wetlands:", currentData.env.wetlands.length],
                 ["Total Flood Zones:", currentData.env.flood.length],
-                ["Total Protected Areas:", currentData.env.protected.length], [],
+                ["Total Protected Areas:", currentData.env.protected.length],
+                ["Total Critical Habitat (Final):", currentData.env.crithabFinal.length],
+                ["Total Critical Habitat (Proposed):", currentData.env.crithabProposed.length], [],
                 ["═══════════════════════════════════════"],
                 ["INFRASTRUCTURE SUMMARY"], ["═══════════════════════════════════════"], [],
                 ["Total Transmission Lines:", currentData.infra.trans.length],
                 ["Total Substations:", currentData.infra.subs.length],
                 ["Total Pipelines:", currentData.infra.pipe.length]
-            ];
+            );
 
             // Breakdowns
             const aggregate = (arr, key) => {
@@ -1241,6 +1746,12 @@
 
             summary.push([], ["Pipeline Operators:"]);
             aggregate(currentData.infra.pipe, 'Operator').forEach(([k,v]) => summary.push([`  ${k}:`, v]));
+
+            summary.push([], ["Critical Habitat Species (Final):"]);
+            aggregate(currentData.env.crithabFinal, 'comname').forEach(([k,v]) => summary.push([`  ${k}:`, v]));
+            
+            summary.push([], ["Critical Habitat Species (Proposed):"]);
+            aggregate(currentData.env.crithabProposed, 'comname').forEach(([k,v]) => summary.push([`  ${k}:`, v]));
 
             XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), "Summary");
 
@@ -1272,6 +1783,14 @@
             currentData.env.protected.forEach(f => {
                 envRows.push(["Protected", f.properties?.Unit_Nm || "", f.properties?.Mang_Name || "", ""]);
             });
+            currentData.env.crithabFinal.forEach(f => {
+                const inArea = f.geometry && f.geometry.type && f.geometry.type.includes('Polygon') && turf.booleanPointInPolygon(pt, f) ? "POINT INSIDE" : "";
+                envRows.push(["Critical Habitat (Final)", f.properties?.comname || "", `${f.properties?.sciname || ''} - ${f.properties?.listing_st || ''} ${inArea}`, ""]);
+            });
+            currentData.env.crithabProposed.forEach(f => {
+                const inArea = f.geometry && f.geometry.type && f.geometry.type.includes('Polygon') && turf.booleanPointInPolygon(pt, f) ? "POINT INSIDE" : "";
+                envRows.push(["Critical Habitat (Proposed)", f.properties?.comname || "", `${f.properties?.sciname || ''} - ${f.properties?.listing_st || ''} ${inArea}`, ""]);
+            });
             XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(envRows), "Environmental");
 
             XLSX.writeFile(wb, `TerraScan_${lastCoords.lat.toFixed(4)}_${lastCoords.lng.toFixed(4)}.xlsx`);
@@ -1282,7 +1801,8 @@
             if(!currentData) return;
             const features = [
                 ...currentData.infra.trans, ...currentData.infra.subs, ...currentData.infra.pipe,
-                ...currentData.env.wetlands, ...currentData.env.flood, ...currentData.env.protected
+                ...currentData.env.wetlands, ...currentData.env.flood, ...currentData.env.protected,
+                ...currentData.env.crithabFinal, ...currentData.env.crithabProposed
             ];
             const blob = new Blob([JSON.stringify({type:"FeatureCollection", features}, null, 2)], {type:'application/json'});
             const url = URL.createObjectURL(blob);
@@ -1299,6 +1819,8 @@
                 currentData.env.flood.forEach(f => rows.push(["Flood", f.properties?.FLD_ZONE, "", getFloodZoneDesc(f.properties?.FLD_ZONE), ""]));
                 currentData.env.wetlands.forEach(f => rows.push(["Wetland", f.properties?.WETLAND_TYPE, "", f.properties?.ATTRIBUTE, f.properties?.ACRES]));
                 currentData.env.protected.forEach(f => rows.push(["Protected", "", f.properties?.Unit_Nm, f.properties?.Mang_Name, ""]));
+                currentData.env.crithabFinal.forEach(f => rows.push(["Critical Habitat (Final)", f.properties?.listing_st, f.properties?.comname, f.properties?.sciname, ""]));
+                currentData.env.crithabProposed.forEach(f => rows.push(["Critical Habitat (Proposed)", f.properties?.listing_st, f.properties?.comname, f.properties?.sciname, ""]));
             } else {
                 const pt = turf.point([lastCoords.lng, lastCoords.lat]);
                 rows.push(["Layer","Name","Voltage","Distance_mi","Owner"]);
