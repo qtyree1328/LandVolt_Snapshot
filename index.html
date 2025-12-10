@@ -551,11 +551,18 @@
                     <div class="warning-list" id="warning-list"></div>
                 </div>
 
-                <!-- Site Score -->
-                <div class="site-score" id="site-score-container">
-                    <div class="site-score-label">Site Feasibility Score</div>
-                    <div class="site-score-value" id="site-score-value">--</div>
-                    <div class="site-score-rating" id="site-score-rating"></div>
+                <!-- Site Scores -->
+                <div style="display: flex; gap: 10px;">
+                    <div class="site-score" id="site-score-container" style="flex:1;">
+                        <div class="site-score-label">☀️ Solar Score</div>
+                        <div class="site-score-value" id="site-score-value">--</div>
+                        <div class="site-score-rating" id="site-score-rating"></div>
+                    </div>
+                    <div class="site-score" id="dc-score-container" style="flex:1;">
+                        <div class="site-score-label">🖥️ Data Center Score</div>
+                        <div class="site-score-value" id="dc-score-value">--</div>
+                        <div class="site-score-rating" id="dc-score-rating"></div>
+                    </div>
                 </div>
 
                 <div class="tabs-row">
@@ -1102,6 +1109,9 @@
             }
         }
 
+        // Expanded search radius for infrastructure when none found in initial buffer
+        const EXPANDED_INFRA_RADIUS = 10; // miles - search up to 15 miles for transmission/substations
+
         async function goToLocation(lng, lat) {
             lastCoords = {lng, lat};
             map.flyTo({ center: [lng, lat], zoom: 13 });
@@ -1123,7 +1133,8 @@
                 const bboxEnv = turf.bbox(buffEnv);
                 const bboxInf = turf.bbox(buffInfra);
                 
-                const [wet, flood, prot, land, trans, sub, pipe, nfhlFlood, crithabFinalPoly, crithabFinalLine, crithabProposedPoly, crithabProposedLine, solarData] = await Promise.all([
+                // Initial query with user-selected buffer
+                let [wet, flood, prot, land, trans, sub, pipe, nfhlFlood, crithabFinalPoly, crithabFinalLine, crithabProposedPoly, crithabProposedLine, solarData] = await Promise.all([
                     queryEsri(SERVICE_URLS.wetlands, bboxEnv),
                     queryEsri(SERVICE_URLS.flood, bboxEnv),
                     queryEsri(SERVICE_URLS.protected, bboxEnv),
@@ -1139,6 +1150,24 @@
                     querySolarResource(lng, lat)
                 ]);
 
+                // EXPANDED SEARCH: If no transmission or substations found, search wider area
+                let expandedSearchUsed = false;
+                if(trans.length === 0 || sub.length === 0) {
+                    const expandedBuff = createBufferFeature([lng, lat], EXPANDED_INFRA_RADIUS, 'circle');
+                    const bboxExpanded = turf.bbox(expandedBuff);
+                    
+                    if(trans.length === 0) {
+                        console.log(`No transmission in ${radInfra}mi buffer, expanding search to ${EXPANDED_INFRA_RADIUS}mi...`);
+                        trans = await queryEsri(SERVICE_URLS.trans, bboxExpanded);
+                        if(trans.length > 0) expandedSearchUsed = true;
+                    }
+                    if(sub.length === 0) {
+                        console.log(`No substations in ${radInfra}mi buffer, expanding search to ${EXPANDED_INFRA_RADIUS}mi...`);
+                        sub = await queryEsri(SERVICE_URLS.subs, bboxExpanded);
+                        if(sub.length > 0) expandedSearchUsed = true;
+                    }
+                }
+
                 const safeIntersects = (f, geom) => {
                     if(!f || !f.geometry) return false;
                     try { return turf.booleanIntersects(f, geom); } catch(e){ return false; }
@@ -1147,6 +1176,43 @@
                     if(!f || !f.geometry) return false;
                     try { return turf.booleanPointInPolygon(f, geom); } catch(e){ return false; }
                 };
+
+                // For infrastructure, include features from expanded search for scoring purposes
+                // but only display features within the user-selected buffer on the map
+                const pt = turf.point([lng, lat]);
+
+                // Process all transmission lines (including expanded search) with distance calculation
+                const allTransWithDist = trans.map(f => {
+                    let dist = Infinity;
+                    try { 
+                        if(f.geometry) { 
+                            const n = turf.nearestPointOnLine(f, pt, {units:'miles'}); 
+                            dist = n.properties.dist; 
+                        } 
+                    } catch(e){}
+                    return {
+                        ...f,
+                        properties: {
+                            ...f.properties,
+                            voltage_rank: getVoltageRank(f.properties?.VOLTAGE || f.properties?.VOLT_CLASS),
+                            voltage_category: getVoltageCategory(f.properties?.VOLTAGE || f.properties?.VOLT_CLASS),
+                            _distance: dist
+                        }
+                    };
+                }).filter(f => f.properties._distance <= EXPANDED_INFRA_RADIUS);
+
+                // Process all substations with distance calculation
+                const allSubsWithDist = sub.map(f => {
+                    let dist = Infinity;
+                    try { if(f.geometry) { dist = turf.distance(pt, f, {units:'miles'}); } } catch(e){}
+                    return {
+                        ...f,
+                        properties: {
+                            ...f.properties,
+                            _distance: dist
+                        }
+                    };
+                }).filter(f => f.properties._distance <= EXPANDED_INFRA_RADIUS);
 
                 currentData = {
                     env: {
@@ -1158,27 +1224,26 @@
                         landuse: land
                     },
                     infra: {
-                        trans: trans.filter(f => safeIntersects(f, buffInfra)).map(f => ({
-                            ...f,
-                            properties: {
-                                ...f.properties,
-                                voltage_rank: getVoltageRank(f.properties?.VOLTAGE || f.properties?.VOLT_CLASS),
-                                voltage_category: getVoltageCategory(f.properties?.VOLTAGE || f.properties?.VOLT_CLASS)
-                            }
-                        })),
-                        subs: sub.filter(f => safePointInPoly(f, buffInfra) || (f.geometry && turf.distance(turf.point([lng,lat]), f, {units:'miles'}) <= radInfra)),
-                        pipe: pipe.filter(f => safeIntersects(f, buffInfra))
+                        // Store ALL infrastructure for scoring (up to expanded radius)
+                        trans: allTransWithDist,
+                        subs: allSubsWithDist,
+                        pipe: pipe.filter(f => safeIntersects(f, buffInfra)),
+                        // Also store what's in the display buffer for map rendering
+                        transInBuffer: allTransWithDist.filter(f => f.properties._distance <= radInfra),
+                        subsInBuffer: allSubsWithDist.filter(f => f.properties._distance <= radInfra)
                     },
-                    solar: solarData
+                    solar: solarData,
+                    expandedSearchUsed: expandedSearchUsed
                 };
 
+                // Display only features within user-selected buffer on map
                 map.getSource('lyr_wet').setData({type:'FeatureCollection', features: currentData.env.wetlands});
                 map.getSource('lyr_flood').setData({type:'FeatureCollection', features: currentData.env.flood});
                 map.getSource('lyr_prot').setData({type:'FeatureCollection', features: currentData.env.protected});
                 map.getSource('lyr_crithab_final').setData({type:'FeatureCollection', features: currentData.env.crithabFinal});
                 map.getSource('lyr_crithab_proposed').setData({type:'FeatureCollection', features: currentData.env.crithabProposed});
-                map.getSource('lyr_trans').setData({type:'FeatureCollection', features: currentData.infra.trans});
-                map.getSource('lyr_sub').setData({type:'FeatureCollection', features: currentData.infra.subs});
+                map.getSource('lyr_trans').setData({type:'FeatureCollection', features: currentData.infra.transInBuffer});
+                map.getSource('lyr_sub').setData({type:'FeatureCollection', features: currentData.infra.subsInBuffer});
                 map.getSource('lyr_pipe').setData({type:'FeatureCollection', features: currentData.infra.pipe});
                 
                 // Update NFHL flood source
@@ -1354,42 +1419,378 @@
             return { flaws, warnings };
         }
 
+        // NLCD code to category mapping
+        const NLCD_CODES = {
+            'Open Water': 11, 'Perennial Ice/Snow': 12, 'Developed, Open Space': 21,
+            'Developed, Low Intensity': 22, 'Developed, Medium Intensity': 23, 'Developed, High Intensity': 24,
+            'Barren Land': 31, 'Deciduous Forest': 41, 'Evergreen Forest': 42, 'Mixed Forest': 43,
+            'Shrub/Scrub': 52, 'Grassland/Herbaceous': 71, 'Pasture/Hay': 81, 'Cultivated Crops': 82,
+            'Woody Wetlands': 90, 'Emergent Herbaceous Wetlands': 95
+        };
+
+        function getNLCDCode(landuse) {
+            return NLCD_CODES[landuse] || 0;
+        }
+
+        function calculateDetailedScores() {
+            const pt = turf.point([lastCoords.lng, lastCoords.lat]);
+            const scores = { solar: { breakdown: {}, total: 0, fatal: false, fatalReason: '' }, dc: { breakdown: {}, total: 0, fatal: false, fatalReason: '' } };
+
+            // === HELPER FUNCTIONS ===
+            const getMaxVoltage = () => {
+                let maxV = 0;
+                currentData.infra.trans.forEach(f => {
+                    const vRaw = f.properties?.VOLTAGE || f.properties?.VOLT_CLASS || "0";
+                    const nums = String(vRaw).match(/\d+/g);
+                    if(nums) { const v = Math.max(...nums.map(n=>parseInt(n))); if(v > maxV && v < 999999) maxV = v; }
+                });
+                return maxV;
+            };
+
+            const getNearestTransDist = () => {
+                let minD = Infinity;
+                currentData.infra.trans.forEach(f => {
+                    // Use pre-calculated distance if available
+                    if(f.properties?._distance !== undefined) {
+                        if(f.properties._distance < minD) minD = f.properties._distance;
+                    } else {
+                        try { if(f.geometry) { const n = turf.nearestPointOnLine(f, pt, {units:'miles'}); if(n.properties.dist < minD) minD = n.properties.dist; } } catch(e){}
+                    }
+                });
+                return minD;
+            };
+
+            const getNearestSubDist = () => {
+                let minD = Infinity;
+                currentData.infra.subs.forEach(f => { 
+                    // Use pre-calculated distance if available
+                    if(f.properties?._distance !== undefined) {
+                        if(f.properties._distance < minD) minD = f.properties._distance;
+                    } else {
+                        if(f.geometry) { const d = turf.distance(pt, f, {units:'miles'}); if(d < minD) minD = d; }
+                    }
+                });
+                return minD;
+            };
+
+            const getSubsWithin = (miles) => {
+                return currentData.infra.subs.filter(f => {
+                    if(f.properties?._distance !== undefined) return f.properties._distance <= miles;
+                    return f.geometry && turf.distance(pt, f, {units:'miles'}) <= miles;
+                }).length;
+            };
+
+            const getNearestPipeDist = () => {
+                let minD = Infinity;
+                currentData.infra.pipe.forEach(f => {
+                    try { if(f.geometry) { const n = turf.nearestPointOnLine(f, pt, {units:'miles'}); if(n.properties.dist < minD) minD = n.properties.dist; } } catch(e){}
+                });
+                return minD;
+            };
+
+            const getTotalWetlandAcres = () => {
+                let total = 0;
+                currentData.env.wetlands.forEach(f => { total += parseFloat(f.properties?.ACRES || 0); });
+                return total;
+            };
+
+            const isPointInWetland = () => {
+                return currentData.env.wetlands.some(f => { try { return turf.booleanPointInPolygon(pt, f); } catch(e) { return false; } });
+            };
+
+            const getFloodZoneAtPoint = () => {
+                let zone = null;
+                currentData.env.flood.forEach(f => { try { if(turf.booleanPointInPolygon(pt, f)) zone = f.properties?.FLD_ZONE; } catch(e){} });
+                return zone;
+            };
+
+            const isPointInCritHabFinal = () => {
+                return currentData.env.crithabFinal.some(f => { try { return f.geometry?.type?.includes('Polygon') && turf.booleanPointInPolygon(pt, f); } catch(e) { return false; } });
+            };
+
+            const isPointInCritHabProposed = () => {
+                return currentData.env.crithabProposed.some(f => { try { return f.geometry?.type?.includes('Polygon') && turf.booleanPointInPolygon(pt, f); } catch(e) { return false; } });
+            };
+
+            const getNearestCritHabFinalDist = () => {
+                let minD = Infinity;
+                currentData.env.crithabFinal.forEach(f => {
+                    try { if(f.geometry) { const d = turf.distance(pt, turf.centroid(f), {units:'miles'}); if(d < minD) minD = d; } } catch(e){}
+                });
+                return minD;
+            };
+
+            const isPointInProtectedFatal = () => {
+                return currentData.env.protected.some(f => {
+                    try {
+                        if(!f.geometry?.type?.includes('Polygon') || !turf.booleanPointInPolygon(pt, f)) return false;
+                        const des = (f.properties?.Des_Tp || f.properties?.Mang_Name || '').toLowerCase();
+                        return FATAL_PROTECTED_TYPES.some(t => des.includes(t.toLowerCase()));
+                    } catch(e) { return false; }
+                });
+            };
+
+            const isPointInProtectedOther = () => {
+                return currentData.env.protected.some(f => {
+                    try { return f.geometry?.type?.includes('Polygon') && turf.booleanPointInPolygon(pt, f); } catch(e) { return false; }
+                });
+            };
+
+            const getNearestProtectedDist = () => {
+                let minD = Infinity;
+                currentData.env.protected.forEach(f => {
+                    try { if(f.geometry) { const d = turf.distance(pt, turf.centroid(f), {units:'miles'}); if(d < minD) minD = d; } } catch(e){}
+                });
+                return minD;
+            };
+
+            // === GET VALUES ===
+            const maxVoltage = getMaxVoltage();
+            const nearestTransDist = getNearestTransDist();
+            const nearestSubDist = getNearestSubDist();
+            const nearestPipeDist = getNearestPipeDist();
+            const totalWetlandAcres = getTotalWetlandAcres();
+            const pointInWetland = isPointInWetland();
+            const floodZone = getFloodZoneAtPoint();
+            const pointInCritHabFinal = isPointInCritHabFinal();
+            const pointInCritHabProposed = isPointInCritHabProposed();
+            const nearestCritHabDist = getNearestCritHabFinalDist();
+            const pointInProtectedFatal = isPointInProtectedFatal();
+            const pointInProtectedOther = isPointInProtectedOther();
+            const nearestProtectedDist = getNearestProtectedDist();
+            const transCount = currentData.infra.trans.length;
+            const subsWithin10 = getSubsWithin(10);
+            const ghi = currentData.solar?.ghi || 0;
+            const nlcdCode = getNLCDCode(currentData.env.landuse);
+
+            // === SOLAR SCORING (100 points) ===
+
+            // 1. Transmission (15 pts)
+            let solarTrans = 0, solarTransReason = '';
+            if(nearestTransDist > 10) { scores.solar.fatal = true; scores.solar.fatalReason = 'No transmission within 10 miles'; solarTrans = 0; solarTransReason = 'FATAL: >10 mi'; }
+            else if(nearestTransDist <= 0.5 && maxVoltage >= 345) { solarTrans = 15; solarTransReason = `<0.5mi, ${maxVoltage}kV`; }
+            else if(nearestTransDist <= 1 && maxVoltage >= 200) { solarTrans = 12; solarTransReason = `${nearestTransDist.toFixed(1)}mi, ${maxVoltage}kV`; }
+            else if(nearestTransDist <= 2 && maxVoltage >= 200) { solarTrans = 10; solarTransReason = `${nearestTransDist.toFixed(1)}mi, ${maxVoltage}kV`; }
+            else if(nearestTransDist <= 2 && maxVoltage < 200) { solarTrans = 8; solarTransReason = `${nearestTransDist.toFixed(1)}mi, ${maxVoltage}kV`; }
+            else if(nearestTransDist <= 5 && maxVoltage >= 200) { solarTrans = 7; solarTransReason = `${nearestTransDist.toFixed(1)}mi, ${maxVoltage}kV`; }
+            else if(nearestTransDist <= 5) { solarTrans = 5; solarTransReason = `${nearestTransDist.toFixed(1)}mi, ${maxVoltage}kV`; }
+            else { solarTrans = 3; solarTransReason = `${nearestTransDist.toFixed(1)}mi away`; }
+            scores.solar.breakdown.transmission = { points: solarTrans, max: 15, reason: solarTransReason };
+
+            // 2. Substations (12 pts)
+            let solarSub = 0, solarSubReason = '';
+            if(nearestSubDist > 20) { scores.solar.fatal = true; scores.solar.fatalReason = 'No substation within 20 miles'; solarSub = 0; solarSubReason = 'FATAL: >20 mi'; }
+            else if(nearestSubDist <= 2) { solarSub = 12; solarSubReason = `${nearestSubDist.toFixed(1)}mi`; }
+            else if(nearestSubDist <= 5) { solarSub = 9; solarSubReason = `${nearestSubDist.toFixed(1)}mi`; }
+            else if(nearestSubDist <= 10) { solarSub = 6; solarSubReason = `${nearestSubDist.toFixed(1)}mi`; }
+            else { solarSub = 3; solarSubReason = `${nearestSubDist.toFixed(1)}mi`; }
+            scores.solar.breakdown.substation = { points: solarSub, max: 12, reason: solarSubReason };
+
+            // 3. Solar Irradiance (15 pts)
+            let solarGHI = 0, solarGHIReason = '';
+            if(ghi >= 5.5) { solarGHI = 15; solarGHIReason = `${ghi.toFixed(2)} - Excellent`; }
+            else if(ghi >= 5.0) { solarGHI = 12; solarGHIReason = `${ghi.toFixed(2)} - Very Good`; }
+            else if(ghi >= 4.5) { solarGHI = 9; solarGHIReason = `${ghi.toFixed(2)} - Good`; }
+            else if(ghi >= 4.0) { solarGHI = 6; solarGHIReason = `${ghi.toFixed(2)} - Fair`; }
+            else if(ghi >= 3.5) { solarGHI = 3; solarGHIReason = `${ghi.toFixed(2)} - Poor`; }
+            else { solarGHI = 0; solarGHIReason = ghi > 0 ? `${ghi.toFixed(2)} - Very Poor` : 'No data'; }
+            scores.solar.breakdown.solarResource = { points: solarGHI, max: 15, reason: solarGHIReason };
+
+            // 4. Critical Habitat (15 pts)
+            let solarCritHab = 0, solarCritHabReason = '';
+            if(pointInCritHabFinal) { scores.solar.fatal = true; scores.solar.fatalReason = 'Point inside Final Critical Habitat'; solarCritHab = 0; solarCritHabReason = 'FATAL: Inside Final CH'; }
+            else if(pointInCritHabProposed) { solarCritHab = 2; solarCritHabReason = 'Inside Proposed CH'; }
+            else if(currentData.env.crithabFinal.length > 0 && nearestCritHabDist <= 0.5) { solarCritHab = 5; solarCritHabReason = `Final CH ${nearestCritHabDist.toFixed(1)}mi`; }
+            else if(currentData.env.crithabFinal.length > 0 && nearestCritHabDist <= 1) { solarCritHab = 8; solarCritHabReason = `Final CH ${nearestCritHabDist.toFixed(1)}mi`; }
+            else if(currentData.env.crithabProposed.length > 0) { solarCritHab = 10; solarCritHabReason = 'Proposed CH nearby'; }
+            else if(currentData.env.crithabFinal.length > 0) { solarCritHab = 12; solarCritHabReason = `CH ${nearestCritHabDist.toFixed(1)}mi`; }
+            else { solarCritHab = 15; solarCritHabReason = 'None in buffer'; }
+            scores.solar.breakdown.criticalHabitat = { points: solarCritHab, max: 15, reason: solarCritHabReason };
+
+            // 5. Flood Zones (12 pts)
+            let solarFlood = 0, solarFloodReason = '';
+            if(floodZone === 'V' || floodZone === 'VE') { scores.solar.fatal = true; scores.solar.fatalReason = `Point inside ${floodZone} flood zone`; solarFlood = 0; solarFloodReason = `FATAL: Zone ${floodZone}`; }
+            else if(['A', 'AE', 'AH', 'AO'].includes(floodZone)) { solarFlood = 3; solarFloodReason = `Zone ${floodZone} - elevated racking needed`; }
+            else if(['A99', 'AR'].includes(floodZone)) { solarFlood = 5; solarFloodReason = `Zone ${floodZone}`; }
+            else if(floodZone === 'X' || (floodZone && floodZone.includes('X'))) { solarFlood = 8; solarFloodReason = 'Zone X (shaded)'; }
+            else if(currentData.env.flood.length > 0) { solarFlood = 10; solarFloodReason = 'Nearby, point outside'; }
+            else { solarFlood = 12; solarFloodReason = 'No flood zones'; }
+            scores.solar.breakdown.floodZone = { points: solarFlood, max: 12, reason: solarFloodReason };
+
+            // 6. Wetlands (10 pts)
+            let solarWet = 0, solarWetReason = '';
+            if(pointInWetland) { solarWet = 0; solarWetReason = 'Point inside wetland'; }
+            else if(totalWetlandAcres > 5) { solarWet = 2; solarWetReason = `${totalWetlandAcres.toFixed(1)} acres`; }
+            else if(totalWetlandAcres > 3) { solarWet = 4; solarWetReason = `${totalWetlandAcres.toFixed(1)} acres`; }
+            else if(totalWetlandAcres > 1) { solarWet = 6; solarWetReason = `${totalWetlandAcres.toFixed(1)} acres`; }
+            else if(totalWetlandAcres > 0.1) { solarWet = 8; solarWetReason = `${totalWetlandAcres.toFixed(1)} acres`; }
+            else { solarWet = 10; solarWetReason = totalWetlandAcres > 0 ? `${totalWetlandAcres.toFixed(2)} acres` : 'None'; }
+            scores.solar.breakdown.wetlands = { points: solarWet, max: 10, reason: solarWetReason };
+
+            // 7. Protected Areas (10 pts)
+            let solarProt = 0, solarProtReason = '';
+            if(pointInProtectedFatal) { scores.solar.fatal = true; scores.solar.fatalReason = 'Point inside Wilderness/NP/Refuge'; solarProt = 0; solarProtReason = 'FATAL: Inside protected'; }
+            else if(pointInProtectedOther) { solarProt = 2; solarProtReason = 'Inside other protected'; }
+            else if(currentData.env.protected.length > 0 && nearestProtectedDist <= 0.5) { solarProt = 5; solarProtReason = `${nearestProtectedDist.toFixed(1)}mi`; }
+            else if(currentData.env.protected.length > 0 && nearestProtectedDist <= 1) { solarProt = 7; solarProtReason = `${nearestProtectedDist.toFixed(1)}mi`; }
+            else if(currentData.env.protected.length > 0) { solarProt = 9; solarProtReason = `${nearestProtectedDist.toFixed(1)}mi`; }
+            else { solarProt = 10; solarProtReason = 'None in buffer'; }
+            scores.solar.breakdown.protectedAreas = { points: solarProt, max: 10, reason: solarProtReason };
+
+            // 8. Land Use (6 pts)
+            let solarLand = 0, solarLandReason = currentData.env.landuse;
+            if([11, 90, 95].includes(nlcdCode)) { solarLand = 0; }
+            else if(nlcdCode === 24) { solarLand = 1; }
+            else if([41, 42, 43].includes(nlcdCode)) { solarLand = 2; }
+            else if(nlcdCode === 23) { solarLand = 3; }
+            else if([21, 22].includes(nlcdCode)) { solarLand = 4; }
+            else if([52, 71].includes(nlcdCode)) { solarLand = 5; }
+            else if([31, 81, 82].includes(nlcdCode)) { solarLand = 6; }
+            else { solarLand = 3; }
+            scores.solar.breakdown.landUse = { points: solarLand, max: 6, reason: solarLandReason };
+
+            // 9. Gas Pipelines (3 pts) - less important for solar
+            let solarPipe = 0, solarPipeReason = '';
+            if(currentData.infra.pipe.length > 0 && nearestPipeDist < 0.5) { solarPipe = 1; solarPipeReason = 'ROW conflict possible'; }
+            else if(currentData.infra.pipe.length > 0 && nearestPipeDist <= 1) { solarPipe = 2; solarPipeReason = `${nearestPipeDist.toFixed(1)}mi`; }
+            else { solarPipe = 3; solarPipeReason = 'No conflict'; }
+            scores.solar.breakdown.gasPipeline = { points: solarPipe, max: 3, reason: solarPipeReason };
+
+            // 10. Infrastructure Density (2 pts)
+            let solarDensity = 0, solarDensityReason = '';
+            if(transCount > 5) { solarDensity = 2; solarDensityReason = `${transCount} lines`; }
+            else if(transCount >= 3) { solarDensity = 1; solarDensityReason = `${transCount} lines`; }
+            else { solarDensity = 0; solarDensityReason = `${transCount} lines`; }
+            scores.solar.breakdown.infraDensity = { points: solarDensity, max: 2, reason: solarDensityReason };
+
+            // === DATA CENTER SCORING (100 points) ===
+
+            // 1. Transmission (12 pts)
+            let dcTrans = 0, dcTransReason = '';
+            if(nearestTransDist > 10) { scores.dc.fatal = true; scores.dc.fatalReason = 'No transmission within 10 miles'; dcTrans = 0; dcTransReason = 'FATAL: >10 mi'; }
+            else if(nearestTransDist <= 0.5 && maxVoltage >= 345) { dcTrans = 12; dcTransReason = `<0.5mi, ${maxVoltage}kV`; }
+            else if(nearestTransDist <= 1 && maxVoltage >= 345) { dcTrans = 10; dcTransReason = `${nearestTransDist.toFixed(1)}mi, ${maxVoltage}kV`; }
+            else if(nearestTransDist <= 2 && maxVoltage >= 200) { dcTrans = 8; dcTransReason = `${nearestTransDist.toFixed(1)}mi, ${maxVoltage}kV`; }
+            else if(nearestTransDist <= 5 && maxVoltage >= 200) { dcTrans = 6; dcTransReason = `${nearestTransDist.toFixed(1)}mi, ${maxVoltage}kV`; }
+            else if(nearestTransDist <= 5) { dcTrans = 4; dcTransReason = `${nearestTransDist.toFixed(1)}mi, ${maxVoltage}kV`; }
+            else { dcTrans = 2; dcTransReason = `${nearestTransDist.toFixed(1)}mi away`; }
+            scores.dc.breakdown.transmission = { points: dcTrans, max: 12, reason: dcTransReason };
+
+            // 2. Substations (15 pts)
+            let dcSub = 0, dcSubReason = '';
+            if(nearestSubDist > 20) { scores.dc.fatal = true; scores.dc.fatalReason = 'No substation within 20 miles'; dcSub = 0; dcSubReason = 'FATAL: >20 mi'; }
+            else if(nearestSubDist <= 1) { dcSub = 15; dcSubReason = `${nearestSubDist.toFixed(1)}mi`; }
+            else if(nearestSubDist <= 2) { dcSub = 13; dcSubReason = `${nearestSubDist.toFixed(1)}mi`; }
+            else if(nearestSubDist <= 5) { dcSub = 10; dcSubReason = `${nearestSubDist.toFixed(1)}mi`; }
+            else if(nearestSubDist <= 10) { dcSub = 6; dcSubReason = `${nearestSubDist.toFixed(1)}mi`; }
+            else { dcSub = 3; dcSubReason = `${nearestSubDist.toFixed(1)}mi`; }
+            scores.dc.breakdown.substation = { points: dcSub, max: 15, reason: dcSubReason };
+
+            // 3. Flood Zones (20 pts) - CRITICAL for DC
+            let dcFlood = 0, dcFloodReason = '';
+            if(['V', 'VE', 'A', 'AE', 'AH', 'AO', 'AR'].includes(floodZone)) { scores.dc.fatal = true; scores.dc.fatalReason = `Point inside ${floodZone} flood zone`; dcFlood = 0; dcFloodReason = `FATAL: Zone ${floodZone}`; }
+            else if(floodZone === 'A99') { dcFlood = 5; dcFloodReason = 'Zone A99'; }
+            else if(floodZone === 'X' || (floodZone && floodZone.includes('X'))) { dcFlood = 10; dcFloodReason = 'Zone X (shaded)'; }
+            else if(currentData.env.flood.length > 0) { dcFlood = 15; dcFloodReason = 'Nearby, point outside'; }
+            else { dcFlood = 20; dcFloodReason = 'No flood zones'; }
+            scores.dc.breakdown.floodZone = { points: dcFlood, max: 20, reason: dcFloodReason };
+
+            // 4. Critical Habitat (12 pts)
+            let dcCritHab = 0, dcCritHabReason = '';
+            if(pointInCritHabFinal) { scores.dc.fatal = true; scores.dc.fatalReason = 'Point inside Final Critical Habitat'; dcCritHab = 0; dcCritHabReason = 'FATAL: Inside Final CH'; }
+            else if(pointInCritHabProposed) { dcCritHab = 2; dcCritHabReason = 'Inside Proposed CH'; }
+            else if(currentData.env.crithabFinal.length > 0 && nearestCritHabDist <= 0.5) { dcCritHab = 4; dcCritHabReason = `Final CH ${nearestCritHabDist.toFixed(1)}mi`; }
+            else if(currentData.env.crithabFinal.length > 0 && nearestCritHabDist <= 1) { dcCritHab = 6; dcCritHabReason = `Final CH ${nearestCritHabDist.toFixed(1)}mi`; }
+            else if(currentData.env.crithabProposed.length > 0) { dcCritHab = 8; dcCritHabReason = 'Proposed CH nearby'; }
+            else if(currentData.env.crithabFinal.length > 0) { dcCritHab = 10; dcCritHabReason = `CH ${nearestCritHabDist.toFixed(1)}mi`; }
+            else { dcCritHab = 12; dcCritHabReason = 'None in buffer'; }
+            scores.dc.breakdown.criticalHabitat = { points: dcCritHab, max: 12, reason: dcCritHabReason };
+
+            // 5. Wetlands (10 pts)
+            let dcWet = 0, dcWetReason = '';
+            if(pointInWetland) { dcWet = 0; dcWetReason = 'Point inside wetland'; }
+            else if(totalWetlandAcres > 5) { dcWet = 2; dcWetReason = `${totalWetlandAcres.toFixed(1)} acres`; }
+            else if(totalWetlandAcres > 3) { dcWet = 4; dcWetReason = `${totalWetlandAcres.toFixed(1)} acres`; }
+            else if(totalWetlandAcres > 1) { dcWet = 6; dcWetReason = `${totalWetlandAcres.toFixed(1)} acres`; }
+            else if(totalWetlandAcres > 0.1) { dcWet = 8; dcWetReason = `${totalWetlandAcres.toFixed(1)} acres`; }
+            else { dcWet = 10; dcWetReason = totalWetlandAcres > 0 ? `${totalWetlandAcres.toFixed(2)} acres` : 'None'; }
+            scores.dc.breakdown.wetlands = { points: dcWet, max: 10, reason: dcWetReason };
+
+            // 6. Protected Areas (10 pts)
+            let dcProt = 0, dcProtReason = '';
+            if(pointInProtectedFatal) { scores.dc.fatal = true; scores.dc.fatalReason = 'Point inside Wilderness/NP/Refuge'; dcProt = 0; dcProtReason = 'FATAL: Inside protected'; }
+            else if(pointInProtectedOther) { dcProt = 2; dcProtReason = 'Inside other protected'; }
+            else if(currentData.env.protected.length > 0 && nearestProtectedDist <= 0.5) { dcProt = 5; dcProtReason = `${nearestProtectedDist.toFixed(1)}mi`; }
+            else if(currentData.env.protected.length > 0 && nearestProtectedDist <= 1) { dcProt = 7; dcProtReason = `${nearestProtectedDist.toFixed(1)}mi`; }
+            else if(currentData.env.protected.length > 0) { dcProt = 9; dcProtReason = `${nearestProtectedDist.toFixed(1)}mi`; }
+            else { dcProt = 10; dcProtReason = 'None in buffer'; }
+            scores.dc.breakdown.protectedAreas = { points: dcProt, max: 10, reason: dcProtReason };
+
+            // 7. Land Use (8 pts)
+            let dcLand = 0, dcLandReason = currentData.env.landuse;
+            if([11, 90, 95].includes(nlcdCode)) { dcLand = 0; }
+            else if([41, 42, 43].includes(nlcdCode)) { dcLand = 2; }
+            else if([81, 82].includes(nlcdCode)) { dcLand = 3; }
+            else if([31, 52, 71].includes(nlcdCode)) { dcLand = 4; }
+            else if(nlcdCode === 22) { dcLand = 6; }
+            else if(nlcdCode === 21) { dcLand = 7; }
+            else if([23, 24].includes(nlcdCode)) { dcLand = 8; }
+            else { dcLand = 4; }
+            scores.dc.breakdown.landUse = { points: dcLand, max: 8, reason: dcLandReason };
+
+            // 8. Gas Pipelines (8 pts) - Important for DC
+            let dcPipe = 0, dcPipeReason = '';
+            if(currentData.infra.pipe.length === 0 || nearestPipeDist > 5) { dcPipe = 2; dcPipeReason = 'No gas access nearby'; }
+            else if(nearestPipeDist <= 1) { dcPipe = 8; dcPipeReason = `${nearestPipeDist.toFixed(1)}mi - gas access`; }
+            else if(nearestPipeDist <= 2) { dcPipe = 6; dcPipeReason = `${nearestPipeDist.toFixed(1)}mi`; }
+            else { dcPipe = 4; dcPipeReason = `${nearestPipeDist.toFixed(1)}mi`; }
+            scores.dc.breakdown.gasPipeline = { points: dcPipe, max: 8, reason: dcPipeReason };
+
+            // 9. Multiple Transmission Feeds (3 pts)
+            let dcFeed = 0, dcFeedReason = '';
+            if(transCount > 5) { dcFeed = 3; dcFeedReason = `${transCount} lines - excellent redundancy`; }
+            else if(transCount >= 4) { dcFeed = 2; dcFeedReason = `${transCount} lines`; }
+            else if(transCount >= 2) { dcFeed = 1; dcFeedReason = `${transCount} lines`; }
+            else { dcFeed = 0; dcFeedReason = `${transCount} line(s) - limited redundancy`; }
+            scores.dc.breakdown.transFeed = { points: dcFeed, max: 3, reason: dcFeedReason };
+
+            // 10. Substation Redundancy (2 pts)
+            let dcSubRed = 0, dcSubRedReason = '';
+            if(subsWithin10 >= 3) { dcSubRed = 2; dcSubRedReason = `${subsWithin10} subs within 10mi`; }
+            else if(subsWithin10 >= 2) { dcSubRed = 1; dcSubRedReason = `${subsWithin10} subs within 10mi`; }
+            else { dcSubRed = 0; dcSubRedReason = `${subsWithin10} sub within 10mi`; }
+            scores.dc.breakdown.subRedundancy = { points: dcSubRed, max: 2, reason: dcSubRedReason };
+
+            // Calculate totals
+            if(scores.solar.fatal) {
+                scores.solar.total = 0;
+            } else {
+                scores.solar.total = Object.values(scores.solar.breakdown).reduce((sum, item) => sum + item.points, 0);
+            }
+            if(scores.dc.fatal) {
+                scores.dc.total = 0;
+            } else {
+                scores.dc.total = Object.values(scores.dc.breakdown).reduce((sum, item) => sum + item.points, 0);
+            }
+
+            return scores;
+        }
+
+        function getScoreRating(score, fatal) {
+            if(fatal) return { rating: 'FATAL FLAW', colorClass: 'score-fatal' };
+            if(score >= 86) return { rating: 'Excellent', colorClass: 'score-excellent' };
+            if(score >= 71) return { rating: 'Very Good', colorClass: 'score-good' };
+            if(score >= 51) return { rating: 'Good', colorClass: 'score-good' };
+            if(score >= 26) return { rating: 'Fair', colorClass: 'score-fair' };
+            return { rating: 'Poor', colorClass: 'score-poor' };
+        }
+
+        // Keep old function for compatibility but use new one
         function calculateSiteScore() {
-            const { flaws, warnings } = analyzeFatalFlaws();
-            
-            // If fatal flaws exist, score is 0
-            if(flaws.length > 0) return { score: 0, rating: 'FATAL FLAWS', colorClass: 'score-fatal' };
-            
-            let score = 100;
-            
-            // Deduct for warnings
-            score -= warnings.length * 10;
-            
-            // Deduct for environmental constraints
-            if(currentData.env.crithabFinal.length > 0) score -= 15;
-            if(currentData.env.crithabProposed.length > 0) score -= 10;
-            if(currentData.env.wetlands.length > 5) score -= 10;
-            else if(currentData.env.wetlands.length > 0) score -= 5;
-            if(currentData.env.flood.length > 0) score -= 10;
-            if(currentData.env.protected.length > 0) score -= 10;
-            
-            // Bonus for good infrastructure
-            if(currentData.infra.trans.length > 3) score += 5;
-            if(currentData.infra.subs.length > 0) score += 5;
-            
-            // Bonus for good solar
-            if(currentData.solar?.ghi >= 5.5) score += 10;
-            else if(currentData.solar?.ghi >= 5.0) score += 5;
-            
-            score = Math.max(0, Math.min(100, score));
-            
-            let rating, colorClass;
-            if(score >= 80) { rating = 'Excellent'; colorClass = 'score-excellent'; }
-            else if(score >= 60) { rating = 'Good'; colorClass = 'score-good'; }
-            else if(score >= 40) { rating = 'Fair'; colorClass = 'score-fair'; }
-            else { rating = 'Poor'; colorClass = 'score-poor'; }
-            
-            return { score, rating, colorClass };
+            const scores = calculateDetailedScores();
+            // Return solar score as primary (can be toggled)
+            const { rating, colorClass } = getScoreRating(scores.solar.total, scores.solar.fatal);
+            return { score: scores.solar.total, rating, colorClass, detailed: scores };
         }
 
         // === STATS ===
@@ -1505,12 +1906,25 @@
                 warningBanner.classList.remove('active');
             }
 
-            // Site Score
-            const { score, rating, colorClass } = calculateSiteScore();
-            document.getElementById('site-score-value').innerText = score;
-            document.getElementById('site-score-value').className = `site-score-value ${colorClass}`;
-            document.getElementById('site-score-rating').innerText = rating;
-            document.getElementById('site-score-rating').className = `site-score-rating ${colorClass}`;
+            // Site Scores - Calculate detailed scores
+            const detailedScores = calculateDetailedScores();
+            
+            // Solar Score
+            const solarRatingInfo = getScoreRating(detailedScores.solar.total, detailedScores.solar.fatal);
+            document.getElementById('site-score-value').innerText = detailedScores.solar.total;
+            document.getElementById('site-score-value').className = `site-score-value ${solarRatingInfo.colorClass}`;
+            document.getElementById('site-score-rating').innerText = `Solar: ${solarRatingInfo.rating}`;
+            document.getElementById('site-score-rating').className = `site-score-rating ${solarRatingInfo.colorClass}`;
+            
+            // DC Score
+            const dcRatingInfo = getScoreRating(detailedScores.dc.total, detailedScores.dc.fatal);
+            document.getElementById('dc-score-value').innerText = detailedScores.dc.total;
+            document.getElementById('dc-score-value').className = `site-score-value ${dcRatingInfo.colorClass}`;
+            document.getElementById('dc-score-rating').innerText = `Data Center: ${dcRatingInfo.rating}`;
+            document.getElementById('dc-score-rating').className = `site-score-rating ${dcRatingInfo.colorClass}`;
+
+            // Store for export
+            currentData.scores = detailedScores;
         }
 
         // === RENDER LIST ===
@@ -1520,23 +1934,34 @@
             const pt = turf.point([lastCoords.lng, lastCoords.lat]);
 
             if(currentTab === 'infra') {
-                currentData.infra.trans.forEach(f => {
+                // Show expanded search notice if applicable
+                if(currentData.expandedSearchUsed) {
+                    container.innerHTML += `<div style="background:#1e3a5f;color:#60a5fa;padding:10px;border-radius:6px;margin-bottom:10px;font-size:11px;">
+                        ℹ️ Search expanded to ${EXPANDED_INFRA_RADIUS} miles to find infrastructure. Features beyond ${radInfra} mi buffer are included for scoring but not shown on map.
+                    </div>`;
+                }
+                
+                // Sort by distance and show transmission lines
+                currentData.infra.trans.sort((a,b) => (a.properties._distance || 999) - (b.properties._distance || 999)).forEach(f => {
                     const p = f.properties || {};
-                    let dist = "";
-                    try { if(f.geometry) { const n = turf.nearestPointOnLine(f, pt, {units:'miles'}); dist = n.properties.dist.toFixed(2) + " mi"; } } catch(e){}
-                    container.innerHTML += `<div class="r-item" style="border-left: 3px solid cyan;">
-                        <div class="r-head">Transmission Line</div>
+                    const dist = p._distance !== undefined ? p._distance.toFixed(2) + " mi" : "N/A";
+                    const isOutsideBuffer = p._distance > radInfra;
+                    container.innerHTML += `<div class="r-item" style="border-left: 3px solid ${isOutsideBuffer ? '#6b7280' : 'cyan'}; ${isOutsideBuffer ? 'opacity:0.7;' : ''}">
+                        <div class="r-head">Transmission Line ${isOutsideBuffer ? '<span style="color:#f59e0b;font-size:10px;">(outside buffer)</span>' : ''}</div>
                         <div class="r-row"><span class="r-lbl">Voltage</span><span class="r-val">${p.VOLTAGE || p.VOLT_CLASS || 'N/A'}</span></div>
-                        <div class="r-row"><span class="r-lbl">Distance</span><span class="r-val">${dist}</span></div>
+                        <div class="r-row"><span class="r-lbl">Distance</span><span class="r-val" style="${isOutsideBuffer ? 'color:#f59e0b;' : ''}">${dist}</span></div>
                         <div class="r-row"><span class="r-lbl">Owner</span><span class="r-val">${p.OWNER || 'N/A'}</span></div>
                     </div>`;
                 });
-                currentData.infra.subs.sort((a,b) => turf.distance(pt,a)-turf.distance(pt,b)).forEach(f => {
+                
+                // Sort by distance and show substations
+                currentData.infra.subs.sort((a,b) => (a.properties._distance || 999) - (b.properties._distance || 999)).forEach(f => {
                     const p = f.properties || {};
-                    const d = f.geometry ? turf.distance(pt, f, {units:'miles'}).toFixed(2) : "";
-                    container.innerHTML += `<div class="r-item" style="border-left: 3px solid #f43f5e;">
-                        <div class="r-head">${p.NAME || 'Substation'}</div>
-                        <div class="r-row"><span class="r-lbl">Distance</span><span class="r-val" style="color:#f43f5e;font-weight:700">${d} mi</span></div>
+                    const dist = p._distance !== undefined ? p._distance.toFixed(2) : "N/A";
+                    const isOutsideBuffer = p._distance > radInfra;
+                    container.innerHTML += `<div class="r-item" style="border-left: 3px solid ${isOutsideBuffer ? '#6b7280' : '#f43f5e'}; ${isOutsideBuffer ? 'opacity:0.7;' : ''}">
+                        <div class="r-head">${p.NAME || 'Substation'} ${isOutsideBuffer ? '<span style="color:#f59e0b;font-size:10px;">(outside buffer)</span>' : ''}</div>
+                        <div class="r-row"><span class="r-lbl">Distance</span><span class="r-val" style="color:${isOutsideBuffer ? '#f59e0b' : '#f43f5e'};font-weight:700">${dist} mi</span></div>
                         <div class="r-row"><span class="r-lbl">Owner</span><span class="r-val">${p.OWNER || 'N/A'}</span></div>
                     </div>`;
                 });
@@ -1548,7 +1973,9 @@
                         <div class="r-row"><span class="r-lbl">Type</span><span class="r-val">${p.Typepipe || 'N/A'}</span></div>
                     </div>`;
                 });
-                if(!container.innerHTML) container.innerHTML = `<div style="color:grey;padding:20px">No infrastructure found in ${radInfra} mi buffer.</div>`;
+                if(currentData.infra.trans.length === 0 && currentData.infra.subs.length === 0 && currentData.infra.pipe.length === 0) {
+                    container.innerHTML = `<div style="color:#f87171;padding:20px">⚠️ No infrastructure found within ${EXPANDED_INFRA_RADIUS} miles. This may indicate a fatal flaw for development.</div>`;
+                }
             } else if(currentTab === 'env') {
                 currentData.env.flood.forEach(f => {
                     const p = f.properties || {};
@@ -1665,22 +2092,42 @@
 
             // Get fatal flaws and site score
             const { flaws, warnings } = analyzeFatalFlaws();
-            const { score, rating } = calculateSiteScore();
+            const detailedScores = currentData.scores || calculateDetailedScores();
             const solarRating = getSolarRating(currentData.solar?.ghi);
 
             const summary = [
-                ["TERRASCAN ANALYSIS REPORT"], [],
+                ["SNAPSHOT ANALYSIS REPORT"], [],
                 ["Generated:", new Date().toISOString()],
                 ["Coordinates:", `${lastCoords.lat.toFixed(6)}, ${lastCoords.lng.toFixed(6)}`],
                 ["Infrastructure Buffer:", `${radInfra} mi (${bufferShape})`],
                 ["Environmental Buffer:", `${radEnv} mi (${bufferShape})`],
                 [], ["═══════════════════════════════════════"],
-                ["SITE FEASIBILITY SCORE"], ["═══════════════════════════════════════"], [],
-                ["SCORE:", `${score}/100`],
-                ["RATING:", rating],
+                ["SITE FEASIBILITY SCORES"], ["═══════════════════════════════════════"], [],
+                ["SOLAR SCORE:", `${detailedScores.solar.total}/100`],
+                ["Solar Rating:", getScoreRating(detailedScores.solar.total, detailedScores.solar.fatal).rating],
+                detailedScores.solar.fatal ? ["Solar Fatal Flaw:", detailedScores.solar.fatalReason] : [], [],
+                ["DATA CENTER SCORE:", `${detailedScores.dc.total}/100`],
+                ["DC Rating:", getScoreRating(detailedScores.dc.total, detailedScores.dc.fatal).rating],
+                detailedScores.dc.fatal ? ["DC Fatal Flaw:", detailedScores.dc.fatalReason] : [],
                 [], ["═══════════════════════════════════════"],
-                ["FATAL FLAWS"], ["═══════════════════════════════════════"], [],
+                ["SOLAR SCORE BREAKDOWN (100 pts total)"], ["═══════════════════════════════════════"], [],
             ];
+            
+            // Add Solar breakdown
+            Object.entries(detailedScores.solar.breakdown).forEach(([key, val]) => {
+                summary.push([`${key}:`, `${val.points}/${val.max}`, val.reason]);
+            });
+            
+            summary.push([], ["═══════════════════════════════════════"],
+                ["DATA CENTER SCORE BREAKDOWN (100 pts total)"], ["═══════════════════════════════════════"], []);
+            
+            // Add DC breakdown
+            Object.entries(detailedScores.dc.breakdown).forEach(([key, val]) => {
+                summary.push([`${key}:`, `${val.points}/${val.max}`, val.reason]);
+            });
+
+            summary.push([], ["═══════════════════════════════════════"],
+                ["FATAL FLAWS DETECTED"], ["═══════════════════════════════════════"], []);
             
             if(flaws.length > 0) {
                 flaws.forEach(f => summary.push(["🚫 " + f]));
@@ -1793,7 +2240,132 @@
             });
             XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(envRows), "Environmental");
 
-            XLSX.writeFile(wb, `TerraScan_${lastCoords.lat.toFixed(4)}_${lastCoords.lng.toFixed(4)}.xlsx`);
+            // Scoring Methodology sheet
+            const methodRows = [
+                ["SCORING METHODOLOGY v3.0"], [],
+                ["Two separate scores are calculated: Solar Score and Data Center Score"],
+                ["Each score is out of 100 points. A FATAL condition = automatic 0."], [],
+                ["═══════════════════════════════════════════════════════════════════════════════"],
+                ["SOLAR DEVELOPMENT SCORING (100 points)"], [],
+                ["Category", "Max Pts", "Condition", "Points"],
+                ["Transmission Lines", "15", "No line within 10mi", "0 (FATAL)"],
+                ["", "", "Line 5-10mi any voltage", "3"],
+                ["", "", "Line 2-5mi <200kV", "5"],
+                ["", "", "Line 2-5mi ≥200kV", "7"],
+                ["", "", "Line 1-2mi <200kV", "8"],
+                ["", "", "Line 1-2mi ≥200kV", "10"],
+                ["", "", "Line 0.5-1mi ≥200kV", "12"],
+                ["", "", "Line <0.5mi ≥345kV", "15"], [],
+                ["Substations", "12", "No substation within 20mi", "0 (FATAL)"],
+                ["", "", "Substation 10-20mi", "3"],
+                ["", "", "Substation 5-10mi", "6"],
+                ["", "", "Substation 2-5mi", "9"],
+                ["", "", "Substation <2mi", "12"], [],
+                ["Solar Irradiance (GHI)", "15", "GHI <3.5 kWh/m²/day", "0"],
+                ["", "", "GHI 3.5-4.0", "3"],
+                ["", "", "GHI 4.0-4.5", "6"],
+                ["", "", "GHI 4.5-5.0", "9"],
+                ["", "", "GHI 5.0-5.5", "12"],
+                ["", "", "GHI ≥5.5", "15"], [],
+                ["Critical Habitat", "15", "Point inside Final CH", "0 (FATAL)"],
+                ["", "", "Point inside Proposed CH", "2"],
+                ["", "", "Final CH within 0.5mi", "5"],
+                ["", "", "Final CH within 1mi", "8"],
+                ["", "", "Proposed CH only nearby", "10"],
+                ["", "", "Any CH 1-3mi", "12"],
+                ["", "", "No CH in buffer", "15"], [],
+                ["Flood Zones", "12", "Point inside Zone V/VE", "0 (FATAL)"],
+                ["", "", "Point inside Zone A/AE/AH/AO", "3"],
+                ["", "", "Point inside Zone A99/AR", "5"],
+                ["", "", "Point inside Zone X (shaded)", "8"],
+                ["", "", "Flood zones nearby, point outside", "10"],
+                ["", "", "No flood zones", "12"], [],
+                ["Wetlands", "10", "Point inside wetland", "0"],
+                ["", "", ">5 acres in buffer", "2"],
+                ["", "", "3-5 acres", "4"],
+                ["", "", "1-3 acres", "6"],
+                ["", "", "0.1-1 acre", "8"],
+                ["", "", "<0.1 acre or none", "10"], [],
+                ["Protected Areas", "10", "Point inside Wilderness/NP/Refuge", "0 (FATAL)"],
+                ["", "", "Point inside other protected", "2"],
+                ["", "", "Protected within 0.5mi", "5"],
+                ["", "", "Protected within 1mi", "7"],
+                ["", "", "Protected >1mi", "9"],
+                ["", "", "None in buffer", "10"], [],
+                ["Land Use", "6", "Water/Wetlands (NLCD 11,90,95)", "0"],
+                ["", "", "Developed High (24)", "1"],
+                ["", "", "Forest (41,42,43)", "2"],
+                ["", "", "Developed Medium (23)", "3"],
+                ["", "", "Developed Low/Open (21,22)", "4"],
+                ["", "", "Shrub/Grassland (52,71)", "5"],
+                ["", "", "Barren/Pasture/Crops (31,81,82)", "6"], [],
+                ["Gas Pipelines", "3", "ROW conflict (<0.5mi)", "1"],
+                ["", "", "Pipeline within 1mi", "2"],
+                ["", "", "No conflict", "3"], [],
+                ["Infra Density", "2", "<3 transmission lines", "0"],
+                ["", "", "3-5 lines", "1"],
+                ["", "", ">5 lines", "2"], [],
+                ["═══════════════════════════════════════════════════════════════════════════════"],
+                ["DATA CENTER SCORING (100 points)"], [],
+                ["Category", "Max Pts", "Condition", "Points"],
+                ["Transmission Lines", "12", "No line within 10mi", "0 (FATAL)"],
+                ["", "", "Line 5-10mi", "2"],
+                ["", "", "Line 2-5mi <200kV", "4"],
+                ["", "", "Line 2-5mi ≥200kV", "6"],
+                ["", "", "Line 1-2mi ≥200kV", "8"],
+                ["", "", "Line 0.5-1mi ≥345kV", "10"],
+                ["", "", "Line <0.5mi ≥345kV", "12"], [],
+                ["Substations", "15", "No substation within 20mi", "0 (FATAL)"],
+                ["", "", "Substation 10-20mi", "3"],
+                ["", "", "Substation 5-10mi", "6"],
+                ["", "", "Substation 2-5mi", "10"],
+                ["", "", "Substation 1-2mi", "13"],
+                ["", "", "Substation <1mi", "15"], [],
+                ["Flood Zones", "20", "Point inside Zone V/VE/A/AE/AH/AO/AR", "0 (FATAL)"],
+                ["", "", "Point inside Zone A99", "5"],
+                ["", "", "Point inside Zone X (shaded)", "10"],
+                ["", "", "Flood zones nearby, point outside", "15"],
+                ["", "", "No flood zones", "20"], [],
+                ["Critical Habitat", "12", "Point inside Final CH", "0 (FATAL)"],
+                ["", "", "Point inside Proposed CH", "2"],
+                ["", "", "Final CH within 0.5mi", "4"],
+                ["", "", "Final CH within 1mi", "6"],
+                ["", "", "Proposed CH only nearby", "8"],
+                ["", "", "Any CH 1-3mi", "10"],
+                ["", "", "No CH in buffer", "12"], [],
+                ["Wetlands", "10", "Same as Solar scoring", ""],
+                ["Protected Areas", "10", "Same as Solar scoring", ""], [],
+                ["Land Use", "8", "Water/Wetlands", "0"],
+                ["", "", "Forest", "2"],
+                ["", "", "Crops/Pasture", "3"],
+                ["", "", "Barren/Shrub/Grassland", "4"],
+                ["", "", "Developed Low", "6"],
+                ["", "", "Developed Open Space", "7"],
+                ["", "", "Developed Med/High", "8"], [],
+                ["Gas Pipelines", "8", "No pipeline within 5mi", "2"],
+                ["", "", "Pipeline 2-5mi", "4"],
+                ["", "", "Pipeline 1-2mi", "6"],
+                ["", "", "Pipeline <1mi (gas access)", "8"], [],
+                ["Trans Redundancy", "3", "<2 lines", "0"],
+                ["", "", "2-3 lines", "1"],
+                ["", "", "4-5 lines", "2"],
+                ["", "", ">5 lines", "3"], [],
+                ["Sub Redundancy", "2", "1 substation within 10mi", "0"],
+                ["", "", "2 substations", "1"],
+                ["", "", "3+ substations", "2"], [],
+                ["═══════════════════════════════════════════════════════════════════════════════"],
+                ["SCORE INTERPRETATION"], [],
+                ["Score Range", "Rating", "Interpretation"],
+                ["0", "FATAL FLAW", "Disqualifying conditions present"],
+                ["1-25", "Poor", "Significant challenges, likely not viable"],
+                ["26-50", "Fair", "Multiple concerns, detailed study needed"],
+                ["51-70", "Good", "Some challenges but generally viable"],
+                ["71-85", "Very Good", "Minor concerns, strong candidate"],
+                ["86-100", "Excellent", "Ideal site, minimal constraints"],
+            ];
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(methodRows), "Scoring Methodology");
+
+            XLSX.writeFile(wb, `Snapshot_${lastCoords.lat.toFixed(4)}_${lastCoords.lng.toFixed(4)}.xlsx`);
             showToast("Excel Report Exported");
         }
 
@@ -1806,7 +2378,7 @@
             ];
             const blob = new Blob([JSON.stringify({type:"FeatureCollection", features}, null, 2)], {type:'application/json'});
             const url = URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = url; a.download = "TerraScan_Data.geojson"; a.click();
+            const a = document.createElement('a'); a.href = url; a.download = "Snapshot_Data.geojson"; a.click();
             URL.revokeObjectURL(url);
             showToast("GeoJSON Exported");
         }
@@ -1838,7 +2410,7 @@
             const csv = rows.map(r => r.map(c => `"${(c||'').toString().replace(/"/g,'""')}"`).join(",")).join("\n");
             const blob = new Blob([csv], {type:'text/csv'});
             const url = URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = url; a.download = `TerraScan_${type}.csv`; a.click();
+            const a = document.createElement('a'); a.href = url; a.download = `Snapshot_${type}.csv`; a.click();
             URL.revokeObjectURL(url);
             showToast(`${type === 'env' ? 'Environmental' : 'Infrastructure'} CSV Exported`);
         }
@@ -1851,5 +2423,4 @@
     </script>
 </body>
 </html>
-
 
