@@ -537,6 +537,37 @@
                         <div class="stat-value" id="stat-solar-ghi">--</div>
                         <div class="stat-subtext" id="stat-solar-rating"></div>
                     </div>
+                    <div class="stat-card" style="border-color: #8b5cf6;">
+                        <div class="stat-label">Risk Index</div>
+                        <div class="stat-value" id="stat-nri-score">--</div>
+                        <div class="stat-subtext" id="stat-nri-rating"></div>
+                    </div>
+                </div>
+
+                <!-- NRI Risk Summary Block -->
+                <div class="nri-summary" id="nri-summary" style="display:none; background: var(--bg-tertiary); border: 1px solid var(--glass-border); border-radius: 8px; padding: 12px; margin: 10px 0;">
+                    <div style="font-size: 11px; font-weight: 600; color: var(--accent-violet); margin-bottom: 8px;">
+                        🛡️ FEMA National Risk Index
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px;">
+                        <div>
+                            <span style="color: var(--text-muted);">Overall Risk:</span>
+                            <span id="nri-overall-rating" style="font-weight: 600;">--</span>
+                        </div>
+                        <div>
+                            <span style="color: var(--text-muted);">Expected Loss:</span>
+                            <span id="nri-eal-rating" style="font-weight: 600;">--</span>
+                        </div>
+                        <div>
+                            <span style="color: var(--text-muted);">Social Vuln:</span>
+                            <span id="nri-svi-rating" style="font-weight: 600;">--</span>
+                        </div>
+                        <div>
+                            <span style="color: var(--text-muted);">Resilience:</span>
+                            <span id="nri-res-rating" style="font-weight: 600;">--</span>
+                        </div>
+                    </div>
+                    <div id="nri-top-hazards" style="margin-top: 8px; font-size: 10px; color: var(--text-secondary);"></div>
                 </div>
 
                 <!-- Fatal Flaws Banner -->
@@ -909,10 +940,12 @@
             trans: 'https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/US_Electric_Power_Transmission_Lines/FeatureServer/0/query',
             subs: 'https://services6.arcgis.com/OO2s4OoyCZkYJ6oE/arcgis/rest/services/Substations/FeatureServer/0/query',
             pipe: 'https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/Natural_Gas_Interstate_and_Intrastate_Pipelines_1/FeatureServer/0/query',
-            solar: 'https://developer.nrel.gov/api/solar/solar_resource/v1.json'
+            // FEMA National Risk Index - Census Tract level (more granular than county)
+            nri: 'https://services.arcgis.com/XG15cJAlne2vxtgt/arcgis/rest/services/National_Risk_Index_Census_Tracts/FeatureServer/0/query'
         };
 
         const NREL_API_KEY = 'zXdbmYJ49pr7aQkN1WktVYVPASCDQRQZykTFa3pd';
+        const USDA_SDA_ENDPOINT = 'https://sdmdataaccess.nrcs.usda.gov/Tabular/SDMTabularService/post.rest';
 
         // Fatal flaw definitions
         const FATAL_FLOOD_ZONES = ['A', 'AE', 'AH', 'AO', 'V', 'VE', 'AR'];
@@ -1134,7 +1167,7 @@
                 const bboxInf = turf.bbox(buffInfra);
                 
                 // Initial query with user-selected buffer
-                let [wet, flood, prot, land, trans, sub, pipe, nfhlFlood, crithabFinalPoly, crithabFinalLine, crithabProposedPoly, crithabProposedLine, solarData] = await Promise.all([
+                let [wet, flood, prot, land, trans, sub, pipe, nfhlFlood, crithabFinalPoly, crithabFinalLine, crithabProposedPoly, crithabProposedLine, solarData, nriData, soilsData] = await Promise.all([
                     queryEsri(SERVICE_URLS.wetlands, bboxEnv),
                     queryEsri(SERVICE_URLS.flood, bboxEnv),
                     queryEsri(SERVICE_URLS.protected, bboxEnv),
@@ -1147,7 +1180,9 @@
                     queryEsri(SERVICE_URLS.crithab_final_line, bboxEnv),
                     queryEsri(SERVICE_URLS.crithab_proposed_poly, bboxEnv),
                     queryEsri(SERVICE_URLS.crithab_proposed_line, bboxEnv),
-                    querySolarResource(lng, lat)
+                    querySolarResource(lng, lat),
+                    queryNRI(lng, lat),
+                    querySoils(lng, lat)
                 ]);
 
                 // EXPANDED SEARCH: If no transmission or substations found, search wider area
@@ -1233,6 +1268,8 @@
                         subsInBuffer: allSubsWithDist.filter(f => f.properties._distance <= radInfra)
                     },
                     solar: solarData,
+                    nri: nriData,
+                    soils: soilsData,
                     expandedSearchUsed: expandedSearchUsed
                 };
 
@@ -1292,19 +1329,165 @@
             } catch { return "Unknown"; }
         }
 
+        // Query NREL Solar Resource API - fast endpoint for UI display
+        // Uses the legacy v1 endpoint which returns pre-calculated averages quickly
         async function querySolarResource(lng, lat) {
             try {
-                const r = await fetch(`${SERVICE_URLS.solar}?api_key=${NREL_API_KEY}&lat=${lat}&lon=${lng}`);
+                const url = `https://developer.nrel.gov/api/solar/solar_resource/v1.json?api_key=${NREL_API_KEY}&lat=${lat}&lon=${lng}`;
+                const r = await fetch(url);
                 const d = await r.json();
                 if(d.outputs) {
                     return {
                         ghi: d.outputs.avg_ghi?.annual || null,
                         dni: d.outputs.avg_dni?.annual || null,
-                        tilt: d.outputs.avg_lat_tilt?.annual || null
+                        tilt: d.outputs.avg_lat_tilt?.annual || null,
+                        source: 'NREL Solar Resource API'
                     };
                 }
                 return { ghi: null, dni: null, tilt: null };
-            } catch { return { ghi: null, dni: null, tilt: null }; }
+            } catch(e) {
+                console.error('Solar resource query failed:', e);
+                return { ghi: null, dni: null, tilt: null };
+            }
+        }
+
+
+        // Query FEMA National Risk Index for the point location
+        async function queryNRI(lng, lat) {
+            try {
+                const pt = turf.point([lng, lat]);
+                const params = new URLSearchParams({
+                    where: '1=1',
+                    geometry: JSON.stringify({ x: lng, y: lat, spatialReference: { wkid: 4326 } }),
+                    geometryType: 'esriGeometryPoint',
+                    spatialRel: 'esriSpatialRelIntersects',
+                    outFields: '*',
+                    returnGeometry: 'false',
+                    f: 'json'
+                });
+                
+                const r = await fetch(`${SERVICE_URLS.nri}?${params}`);
+                const d = await r.json();
+                
+                if(d.features && d.features.length > 0) {
+                    const props = d.features[0].attributes;
+                    return {
+                        // Overall Risk
+                        riskScore: props.RISK_SCORE,
+                        riskRating: props.RISK_RATNG,
+                        // Expected Annual Loss
+                        ealScore: props.EAL_SCORE,
+                        ealRating: props.EAL_RATNG,
+                        ealTotal: props.EAL_VALT,
+                        // Social Vulnerability
+                        sviScore: props.SOVI_SCORE,
+                        sviRating: props.SOVI_RATNG,
+                        // Community Resilience
+                        resScore: props.RESL_SCORE,
+                        resRating: props.RESL_RATNG,
+                        // Individual Hazard Scores (18 hazards)
+                        hazards: {
+                            avalanche: { score: props.AVLN_RISKS, rating: props.AVLN_RISKR },
+                            coastalFlooding: { score: props.CFLD_RISKS, rating: props.CFLD_RISKR },
+                            coldWave: { score: props.CWAV_RISKS, rating: props.CWAV_RISKR },
+                            drought: { score: props.DRGT_RISKS, rating: props.DRGT_RISKR },
+                            earthquake: { score: props.ERQK_RISKS, rating: props.ERQK_RISKR },
+                            hail: { score: props.HAIL_RISKS, rating: props.HAIL_RISKR },
+                            heatWave: { score: props.HWAV_RISKS, rating: props.HWAV_RISKR },
+                            hurricane: { score: props.HRCN_RISKS, rating: props.HRCN_RISKR },
+                            icestorm: { score: props.ISTM_RISKS, rating: props.ISTM_RISKR },
+                            landslide: { score: props.LNDS_RISKS, rating: props.LNDS_RISKR },
+                            lightning: { score: props.LTNG_RISKS, rating: props.LTNG_RISKR },
+                            riverineFlooding: { score: props.RFLD_RISKS, rating: props.RFLD_RISKR },
+                            strongWind: { score: props.SWND_RISKS, rating: props.SWND_RISKR },
+                            tornado: { score: props.TRND_RISKS, rating: props.TRND_RISKR },
+                            tsunami: { score: props.TSUN_RISKS, rating: props.TSUN_RISKR },
+                            volcanicActivity: { score: props.VLCN_RISKS, rating: props.VLCN_RISKR },
+                            wildfire: { score: props.WFIR_RISKS, rating: props.WFIR_RISKR },
+                            winterWeather: { score: props.WNTW_RISKS, rating: props.WNTW_RISKR }
+                        },
+                        // Location info
+                        tractId: props.TRACTFIPS,
+                        county: props.COUNTY,
+                        state: props.STATE
+                    };
+                }
+                return null;
+            } catch(e) {
+                console.error('NRI query failed:', e);
+                return null;
+            }
+        }
+
+        async function runSDAQuery(sql, columnNames = []) {
+            const cleanSql = sql.replace(/\s+/g, ' ').trim();
+            const payload = { query: cleanSql, format: 'JSON' };
+            console.log('SDA Query payload:', JSON.stringify(payload));
+            
+            const r = await fetch(USDA_SDA_ENDPOINT, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const text = await r.text();
+            console.log('SDA raw response:', text.slice(0, 500));
+            
+            if(!r.ok) {
+                console.warn('Soils request failed:', r.status, text.slice(0,500));
+                return null;
+            }
+            try {
+                const data = JSON.parse(text);
+                const rows = data?.Table || [];
+                if(!rows.length) return [];
+                
+                if(!columnNames.length) return rows;
+                return rows.map(row => {
+                    const obj = {};
+                    columnNames.forEach((col, idx) => { obj[col] = row[idx]; });
+                    return obj;
+                });
+            } catch(e) {
+                console.warn('Soils response parse failed:', e);
+                return null;
+            }
+        }
+
+        async function querySoils(lng, lat) {
+            try {
+                const lon = Number(lng) || 0;
+                const latVal = Number(lat) || 0;
+                const pointWkt = `POINT(${lon.toFixed(6)} ${latVal.toFixed(6)})`;
+                const sql = `
+                    SELECT mu.mukey, mu.muname, mu.farmlndcl
+                    FROM mapunit AS mu
+                    WHERE mu.mukey IN (
+                        SELECT mukey FROM SDA_Get_Mukey_from_intersection_with_WktWgs84('${pointWkt}')
+                    )
+                `;
+                const rows = await runSDAQuery(sql, ['mukey','muname','farmlndcl']);
+                if(!rows || !rows.length) return null;
+                return {
+                    mukey: rows[0].mukey,
+                    muname: rows[0].muname,
+                    farmlandClass: rows[0].farmlndcl
+                };
+            } catch(e) {
+                console.error('Soils query failed:', e);
+                return null;
+            }
+        }
+
+        // Get NRI Risk rating color
+        function getNRIRatingColor(rating) {
+            if(!rating) return '#6b7280';
+            const r = rating.toLowerCase();
+            if(r.includes('very high')) return '#dc2626';
+            if(r.includes('relatively high')) return '#f97316';
+            if(r.includes('relatively moderate')) return '#eab308';
+            if(r.includes('relatively low')) return '#22c55e';
+            if(r.includes('very low')) return '#06b6d4';
+            return '#6b7280';
         }
 
         function getSolarRating(ghi) {
@@ -1761,6 +1944,35 @@
             else { dcSubRed = 0; dcSubRedReason = `${subsWithin10} sub within 10mi`; }
             scores.dc.breakdown.subRedundancy = { points: dcSubRed, max: 2, reason: dcSubRedReason };
 
+            // === NRI RISK ADJUSTMENT (for both Solar and DC) ===
+            // NRI can add up to +5 bonus points for very low risk, or deduct up to -10 for very high risk
+            let nriAdjustSolar = 0, nriAdjustDC = 0, nriAdjustReason = '';
+            if(currentData.nri) {
+                const riskRating = currentData.nri.riskRating?.toLowerCase() || '';
+                if(riskRating.includes('very low')) { nriAdjustSolar = 5; nriAdjustDC = 5; nriAdjustReason = 'Very Low Risk (+5)'; }
+                else if(riskRating.includes('relatively low')) { nriAdjustSolar = 3; nriAdjustDC = 3; nriAdjustReason = 'Relatively Low Risk (+3)'; }
+                else if(riskRating.includes('relatively moderate')) { nriAdjustSolar = 0; nriAdjustDC = 0; nriAdjustReason = 'Moderate Risk (0)'; }
+                else if(riskRating.includes('relatively high')) { nriAdjustSolar = -5; nriAdjustDC = -7; nriAdjustReason = 'Relatively High Risk (-5/-7)'; }
+                else if(riskRating.includes('very high')) { nriAdjustSolar = -8; nriAdjustDC = -10; nriAdjustReason = 'Very High Risk (-8/-10)'; }
+                else { nriAdjustReason = 'N/A'; }
+                
+                // Check specific high-impact hazards for DC (earthquake, tornado, hurricane)
+                if(currentData.nri.hazards) {
+                    const hazards = currentData.nri.hazards;
+                    const highRiskHazards = ['earthquake', 'tornado', 'hurricane'];
+                    highRiskHazards.forEach(h => {
+                        if(hazards[h]?.rating?.toLowerCase().includes('very high') || hazards[h]?.rating?.toLowerCase().includes('relatively high')) {
+                            nriAdjustDC -= 2; // Additional penalty for DC
+                            nriAdjustReason += ` [High ${h} risk]`;
+                        }
+                    });
+                }
+            } else {
+                nriAdjustReason = 'No NRI data';
+            }
+            scores.solar.breakdown.nriRisk = { points: nriAdjustSolar, max: 5, reason: nriAdjustReason };
+            scores.dc.breakdown.nriRisk = { points: nriAdjustDC, max: 5, reason: nriAdjustReason };
+
             // Calculate totals
             if(scores.solar.fatal) {
                 scores.solar.total = 0;
@@ -1883,6 +2095,55 @@
             } else {
                 document.getElementById('stat-solar-ghi').innerText = '--';
                 document.getElementById('stat-solar-rating').innerText = '';
+            }
+
+            // National Risk Index
+            const nriSummary = document.getElementById('nri-summary');
+            if(currentData.nri) {
+                const nri = currentData.nri;
+                const riskColor = getNRIRatingColor(nri.riskRating);
+                
+                // Stat card
+                document.getElementById('stat-nri-score').innerText = nri.riskScore ? nri.riskScore.toFixed(1) : '--';
+                document.getElementById('stat-nri-score').style.color = riskColor;
+                document.getElementById('stat-nri-rating').innerText = nri.riskRating || '';
+                document.getElementById('stat-nri-rating').style.color = riskColor;
+                
+                // Summary block
+                nriSummary.style.display = 'block';
+                document.getElementById('nri-overall-rating').innerText = nri.riskRating || '--';
+                document.getElementById('nri-overall-rating').style.color = riskColor;
+                document.getElementById('nri-eal-rating').innerText = nri.ealRating || '--';
+                document.getElementById('nri-eal-rating').style.color = getNRIRatingColor(nri.ealRating);
+                document.getElementById('nri-svi-rating').innerText = nri.sviRating || '--';
+                document.getElementById('nri-svi-rating').style.color = getNRIRatingColor(nri.sviRating);
+                document.getElementById('nri-res-rating').innerText = nri.resRating || '--';
+                document.getElementById('nri-res-rating').style.color = getNRIRatingColor(nri.resRating);
+                
+                // Top hazards
+                if(nri.hazards) {
+                    const hazardNames = {
+                        avalanche: 'Avalanche', coastalFlooding: 'Coastal Flood', coldWave: 'Cold Wave',
+                        drought: 'Drought', earthquake: 'Earthquake', hail: 'Hail', heatWave: 'Heat Wave',
+                        hurricane: 'Hurricane', icestorm: 'Ice Storm', landslide: 'Landslide',
+                        lightning: 'Lightning', riverineFlooding: 'River Flood', strongWind: 'Strong Wind',
+                        tornado: 'Tornado', tsunami: 'Tsunami', volcanicActivity: 'Volcanic',
+                        wildfire: 'Wildfire', winterWeather: 'Winter Weather'
+                    };
+                    
+                    const topHazards = Object.entries(nri.hazards)
+                        .filter(([k, v]) => v.score && v.score > 0)
+                        .sort((a, b) => (b[1].score || 0) - (a[1].score || 0))
+                        .slice(0, 3)
+                        .map(([k, v]) => `${hazardNames[k]}: ${v.rating || 'N/A'}`)
+                        .join(' • ');
+                    
+                    document.getElementById('nri-top-hazards').innerText = topHazards ? `Top Risks: ${topHazards}` : '';
+                }
+            } else {
+                document.getElementById('stat-nri-score').innerText = '--';
+                document.getElementById('stat-nri-rating').innerText = '';
+                nriSummary.style.display = 'none';
             }
 
             // Fatal Flaws and Warnings
@@ -2042,8 +2303,13 @@
         }
 
         // === EXPORTS ===
-        function exportExcelSummary() {
+        async function exportExcelSummary() {
             if(!currentData || !lastCoords) return;
+            
+            // Show loading indicator
+            document.getElementById('loading').classList.add('active');
+            showToast("Preparing export...");
+            
             const wb = XLSX.utils.book_new();
             const pt = turf.point([lastCoords.lng, lastCoords.lat]);
             
@@ -2159,10 +2425,14 @@
                 ["  Owner:", maxVOwner], [],
                 ["═══════════════════════════════════════"],
                 ["SOLAR RESOURCE"], ["═══════════════════════════════════════"], [],
+                ["--- Quick Reference (NREL API) ---"],
                 ["Global Horizontal Irradiance (GHI):", currentData.solar?.ghi ? `${currentData.solar.ghi.toFixed(2)} kWh/m²/day` : "N/A"],
                 ["Direct Normal Irradiance (DNI):", currentData.solar?.dni ? `${currentData.solar.dni.toFixed(2)} kWh/m²/day` : "N/A"],
                 ["Tilt at Latitude:", currentData.solar?.tilt ? `${currentData.solar.tilt.toFixed(2)} kWh/m²/day` : "N/A"],
-                ["Solar Rating:", solarRating.rating], [],
+                ["Solar Rating:", solarRating.rating], []
+            );
+            
+            summary.push(
                 ["═══════════════════════════════════════"],
                 ["ENVIRONMENTAL SUMMARY"], ["═══════════════════════════════════════"], [],
                 ["Dominant Land Use:", currentData.env.landuse],
@@ -2199,6 +2469,90 @@
             
             summary.push([], ["Critical Habitat Species (Proposed):"]);
             aggregate(currentData.env.crithabProposed, 'comname').forEach(([k,v]) => summary.push([`  ${k}:`, v]));
+
+            // === NRI FULL RISK REPORT ===
+            summary.push([], ["═══════════════════════════════════════"],
+                ["FEMA NATIONAL RISK INDEX"], ["═══════════════════════════════════════"], []);
+            
+            if(currentData.nri) {
+                const nri = currentData.nri;
+                summary.push(
+                    ["Location:", `${nri.county || ''}, ${nri.state || ''}`],
+                    ["Census Tract:", nri.tractId || 'N/A'], [],
+                    ["OVERALL RISK"],
+                    ["  Risk Score:", nri.riskScore?.toFixed(2) || 'N/A'],
+                    ["  Risk Rating:", nri.riskRating || 'N/A'], [],
+                    ["EXPECTED ANNUAL LOSS"],
+                    ["  EAL Score:", nri.ealScore?.toFixed(2) || 'N/A'],
+                    ["  EAL Rating:", nri.ealRating || 'N/A'],
+                    ["  Total Expected Annual Loss:", nri.ealTotal ? `$${nri.ealTotal.toLocaleString()}` : 'N/A'], [],
+                    ["SOCIAL VULNERABILITY"],
+                    ["  Score:", nri.sviScore?.toFixed(2) || 'N/A'],
+                    ["  Rating:", nri.sviRating || 'N/A'], [],
+                    ["COMMUNITY RESILIENCE"],
+                    ["  Score:", nri.resScore?.toFixed(2) || 'N/A'],
+                    ["  Rating:", nri.resRating || 'N/A'], [],
+                    ["───────────────────────────────────────"],
+                    ["INDIVIDUAL HAZARD RISK SCORES (18 Hazards)"],
+                    ["───────────────────────────────────────"], []
+                );
+                
+                if(nri.hazards) {
+                    const hazardNames = {
+                        avalanche: 'Avalanche', coastalFlooding: 'Coastal Flooding', coldWave: 'Cold Wave',
+                        drought: 'Drought', earthquake: 'Earthquake', hail: 'Hail', heatWave: 'Heat Wave',
+                        hurricane: 'Hurricane', icestorm: 'Ice Storm', landslide: 'Landslide',
+                        lightning: 'Lightning', riverineFlooding: 'Riverine Flooding', strongWind: 'Strong Wind',
+                        tornado: 'Tornado', tsunami: 'Tsunami', volcanicActivity: 'Volcanic Activity',
+                        wildfire: 'Wildfire', winterWeather: 'Winter Weather'
+                    };
+                    
+                    // Sort hazards by score descending
+                    const sortedHazards = Object.entries(nri.hazards)
+                        .sort((a, b) => (b[1].score || 0) - (a[1].score || 0));
+                    
+                    sortedHazards.forEach(([key, val]) => {
+                        const name = hazardNames[key] || key;
+                        summary.push([`  ${name}:`, val.score?.toFixed(2) || 'N/A', val.rating || 'N/A']);
+                    });
+                }
+            } else {
+                summary.push(["NRI data not available for this location"]);
+            }
+
+            // === SOILS REPORT ===
+            summary.push([], ["═══════════════════════════════════════"],
+                ["USDA SSURGO SOILS DATA"], ["═══════════════════════════════════════"], []);
+            
+            if(currentData.soils) {
+                const soil = currentData.soils;
+                summary.push(
+                    ["Map Unit Name:", soil.muname || 'N/A'],
+                    ["Map Unit Key:", soil.mukey || 'N/A'],
+                    ["Map Unit Symbol:", soil.musym || 'N/A'],
+                    ["Map Unit Kind:", soil.mukind || 'N/A'],
+                    ["Map Unit Acres:", soil.muacres ? soil.muacres.toLocaleString() : 'N/A'], [],
+                    ["FARMLAND CLASSIFICATION"],
+                    ["  Class:", soil.farmlandClass || 'N/A'], [],
+                    ["DRAINAGE & HYDROLOGY"],
+                    ["  Drainage Class:", soil.drainageClass || 'N/A'],
+                    ["  Hydrologic Group:", soil.hydrologicGroup || 'N/A'], [],
+                    ["SLOPE"],
+                    ["  Slope Gradient:", soil.slopeGradient ? `${soil.slopeGradient}%` : 'N/A'], [],
+                    ["CORROSION RISK"],
+                    ["  Steel:", soil.corrosionSteel || 'N/A'],
+                    ["  Concrete:", soil.corrosionConcrete || 'N/A'], [],
+                    ["TAXONOMY"],
+                    ["  Order:", soil.taxOrder || 'N/A'],
+                    ["  Suborder:", soil.taxSuborder || 'N/A'],
+                    ["  Great Group:", soil.taxGreatGroup || 'N/A'], [],
+                    ["SURVEY AREA"],
+                    ["  Symbol:", soil.areaSymbol || 'N/A'],
+                    ["  Name:", soil.areaName || 'N/A']
+                );
+            } else {
+                summary.push(["Soils data not available for this location"]);
+            }
 
             XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), "Summary");
 
@@ -2354,6 +2708,20 @@
                 ["", "", "2 substations", "1"],
                 ["", "", "3+ substations", "2"], [],
                 ["═══════════════════════════════════════════════════════════════════════════════"],
+                ["FEMA NATIONAL RISK INDEX ADJUSTMENT (applies to both scores)"], [],
+                ["NRI Overall Rating", "Pts", "Solar Adjustment", "DC Adjustment"],
+                ["Very Low Risk", "+5", "+5 pts", "+5 pts"],
+                ["Relatively Low Risk", "+3", "+3 pts", "+3 pts"],
+                ["Relatively Moderate Risk", "0", "No change", "No change"],
+                ["Relatively High Risk", "-5/-7", "-5 pts", "-7 pts"],
+                ["Very High Risk", "-8/-10", "-8 pts", "-10 pts"], [],
+                ["Additional DC Penalties:", "", "", ""],
+                ["", "", "High earthquake risk", "-2 additional"],
+                ["", "", "High tornado risk", "-2 additional"],
+                ["", "", "High hurricane risk", "-2 additional"], [],
+                ["Note: NRI scores are at Census Tract level and reflect 18 natural hazards,"],
+                ["social vulnerability, expected annual loss, and community resilience."], [],
+                ["═══════════════════════════════════════════════════════════════════════════════"],
                 ["SCORE INTERPRETATION"], [],
                 ["Score Range", "Rating", "Interpretation"],
                 ["0", "FATAL FLAW", "Disqualifying conditions present"],
@@ -2361,11 +2729,26 @@
                 ["26-50", "Fair", "Multiple concerns, detailed study needed"],
                 ["51-70", "Good", "Some challenges but generally viable"],
                 ["71-85", "Very Good", "Minor concerns, strong candidate"],
-                ["86-100", "Excellent", "Ideal site, minimal constraints"],
+                ["86-100", "Excellent", "Ideal site, minimal constraints"], [],
+                ["═══════════════════════════════════════════════════════════════════════════════"],
+                ["DATA SOURCES"], [],
+                ["Layer", "Source", "Update Frequency"],
+                ["Solar Irradiance", "NREL NSRDB PSM v4 TMY (1998-2023)", "Annual"],
+                ["Transmission Lines", "HIFLD/EIA", "Quarterly"],
+                ["Substations", "HIFLD/EIA", "Quarterly"],
+                ["Gas Pipelines", "HIFLD/EIA", "Quarterly"],
+                ["Flood Zones", "FEMA NFHL", "Varies by county"],
+                ["Wetlands", "NWI/USFWS", "Varies"],
+                ["Protected Areas", "USGS PAD-US", "Annual"],
+                ["Critical Habitat", "USFWS ECOS", "As designated"],
+                ["Land Use", "USGS NLCD", "Every 2-3 years"],
+                ["National Risk Index", "FEMA NRI", "Annual"],
+                ["Soils", "USDA SSURGO", "As surveyed"],
             ];
             XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(methodRows), "Scoring Methodology");
 
             XLSX.writeFile(wb, `Snapshot_${lastCoords.lat.toFixed(4)}_${lastCoords.lng.toFixed(4)}.xlsx`);
+            document.getElementById('loading').classList.remove('active');
             showToast("Excel Report Exported");
         }
 
@@ -2423,4 +2806,3 @@
     </script>
 </body>
 </html>
-
