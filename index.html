@@ -432,10 +432,10 @@
                 <div class="layer-group-title">Environmental</div>
                 <div class="layer-toggle" data-layer="landuse"><div class="layer-checkbox c-env checked"></div><span class="layer-label">Land Use (NLCD)</span></div>
                 <div class="layer-toggle" data-layer="wetlands"><div class="layer-checkbox c-wet checked"></div><span class="layer-label">Wetlands (NWI)</span></div>
-                <div class="layer-toggle" data-layer="wetlands_mapright"><div class="layer-checkbox c-wet"></div><span class="layer-label">Wetlands (National)</span></div>
+                <div class="layer-toggle" data-layer="wetlands_mapright"><div class="layer-checkbox c-wet"></div><span class="layer-label">National Wetlands (tiles)</span></div>
                 <div class="layer-toggle" data-layer="floodzone"><div class="layer-checkbox c-flood checked"></div><span class="layer-label">Flood Zones (FEMA)</span></div>
-                <div class="layer-toggle" data-layer="nflood_floodzones"><div class="layer-checkbox c-flood"></div><span class="layer-label">Flood Data (National)</span></div>
-                <div class="layer-toggle" data-layer="nfhl_flood"><div class="layer-checkbox c-flood"></div><span class="layer-label">Flood Hazard (NFHL)</span></div>
+                <div class="layer-toggle" data-layer="nflood_floodzones"><div class="layer-checkbox c-flood"></div><span class="layer-label">National Flood Data (tiles)</span></div>
+                <div class="layer-toggle" data-layer="nfhl_fema"><div class="layer-checkbox c-flood"></div><span class="layer-label">NFHL Flood (FEMA NFHL)</span></div>
                 <div class="layer-toggle" data-layer="protected"><div class="layer-checkbox c-prot checked"></div><span class="layer-label">Protected Areas</span></div>
                 <div class="layer-toggle" data-layer="crithab_final"><div class="layer-checkbox c-crithab checked"></div><span class="layer-label">Critical Habitat (Final)</span></div>
                 <div class="layer-toggle" data-layer="crithab_proposed"><div class="layer-checkbox c-crithab-prop"></div><span class="layer-label">Critical Habitat (Proposed)</span></div>
@@ -618,7 +618,10 @@
 
     <div class="toast" id="toast">Export Complete</div>
 
-    <script>
+    <script type="module">
+        import { SnapshotSDK } from "./snapshot-sdk.js";
+
+        SnapshotSDK.init({});
         // === CONFIG & STATE ===
         const BASEMAP_STYLES = {
             'carto-dark': {
@@ -649,46 +652,26 @@
         function setupAnalysisLayers() {
             // Add sources if missing
             ['buff_inf','buff_env','lyr_trans','lyr_sub','lyr_pipe','lyr_wet','lyr_flood','lyr_prot','lyr_crithab_final','lyr_crithab_proposed'].forEach(id => {
-                if (!map.getSource(id)) {
-                    map.addSource(id, {
-                        type: 'geojson',
-                        data: { type: 'FeatureCollection', features: [] }
-                    });
-                }
+                SnapshotSDK.ensureGeoJSONSource(map, id);
             });
-            
-            // National Flood Data tiles
-            if (!map.getSource('nflood_tiles')) {
-                map.addSource('nflood_tiles', {
-                    type: 'vector',
-                    tiles: [
-                        'https://api.nationalflooddata.com/v3/specialized/floodtiles1/{z}/{x}/{y}.pbf?x-api-key=cdXEOPkdCoiYUPQ4JN9f6VcpoNi3qxl8cGZRUbBi'
-                    ],
-                    minzoom: 0,
-                    maxzoom: 22
-                });
-            }
-            
-            // National Wetlands
-            if (!map.getSource('wetlands_mapright')) {
-                map.addSource('wetlands_mapright', {
-                    type: 'vector',
-                    tiles: [
-                        'https://a.tiles.mapbox.com/v4/mapright2.Wetlands_HI_20231027_1698423129,mapright2.Wetlands_AK3_20231030_1698732312,mapright2.Wetlands_3_20231030_1698776568,mapright2.Wetlands_AK1_20231030_1698702921,mapright2.Wetlands_AK2_20231030_1698730908,mapright2.Wetlands_1_20231107_1699493429,mapright2.Wetlands_2_20231107_1699449165,mapright2.Wetlands_Rip_20231113_1699903114/{z}/{x}/{y}.vector.pbf?access_token=pk.eyJ1IjoibWFwcmlnaHQyIiwiYSI6IkpMTE8tT0EifQ.BVYqz1Tp-th28TXPgg3rrQ',
-                        'https://b.tiles.mapbox.com/v4/mapright2.Wetlands_HI_20231027_1698423129,mapright2.Wetlands_AK3_20231030_1698732312,mapright2.Wetlands_3_20231030_1698776568,mapright2.Wetlands_AK1_20231030_1698702921,mapright2.Wetlands_AK2_20231030_1698730908,mapright2.Wetlands_1_20231107_1699493429,mapright2.Wetlands_2_20231107_1699449165,mapright2.Wetlands_Rip_20231113_1699903114/{z}/{x}/{y}.vector.pbf?access_token=pk.eyJ1IjoibWFwcmlnaHQyIiwiYSI6IkpMTE8tT0EifQ.BVYqz1Tp-th28TXPgg3rrQ'
-                    ],
-                    minzoom: 12,
-                    maxzoom: 14
-                });
-            }
-            
-            // NFHL Flood source (will be populated on query)
-            if (!map.getSource('nfhl_flood')) {
-                map.addSource('nfhl_flood', {
-                    type: 'geojson',
-                    data: { type: 'FeatureCollection', features: [] }
-                });
-            }
+
+            const nfdfOverlay = SnapshotSDK.getNFDFOverlay();
+            const wetlandsOverlay = SnapshotSDK.getMapRightWetlandsOverlay();
+            const nfhlOverlay = SnapshotSDK.getNFHLOverlay();
+
+            SnapshotSDK.ensureVectorTileSource(map, nfdfOverlay.sourceId, {
+                tiles: nfdfOverlay.tiles,
+                minzoom: 0,
+                maxzoom: 22
+            });
+
+            SnapshotSDK.ensureVectorTileSource(map, wetlandsOverlay.sourceId, {
+                tiles: wetlandsOverlay.tiles,
+                minzoom: wetlandsOverlay.minzoom,
+                maxzoom: wetlandsOverlay.maxzoom
+            });
+
+            SnapshotSDK.ensureGeoJSONSource(map, nfhlOverlay.sourceId);
 
             // Add layers if missing
             if (!map.getLayer('fill_buff_inf')) {
@@ -774,64 +757,36 @@
             }
             
             // National Flood Data overlay (default hidden)
-            if (!map.getLayer('nflood_floodzones')) {
-                map.addLayer({
-                    id: 'nflood_floodzones',
-                    type: 'fill',
-                    source: 'nflood_tiles',
-                    'source-layer': 'default',
-                    paint: {
-                        'fill-color': '#f97316',
-                        'fill-opacity': 0.35
-                    },
-                    layout: { 'visibility': 'none' }
-                });
-            }
+            SnapshotSDK.ensureLayer(map, {
+                id: nfdfOverlay.layerId,
+                type: 'fill',
+                source: nfdfOverlay.sourceId,
+                'source-layer': nfdfOverlay.sourceLayer,
+                paint: nfdfOverlay.style.paint,
+                layout: nfdfOverlay.style.layout
+            });
 
             // National Wetlands overlays (default hidden)
-            const MAPRIGHT_WETLAND_LAYERS = [
-                'Wetlands_HI_20231027_1698423063.5217037',
-                'Wetlands_AK3_20231030_1698731010.392679',
-                'Wetlands_3_20231030_1698768698.5538049',
-                'Wetlands_AK1_20231030_1698701662.3827837',
-                'Wetlands_AK2_20231030_1698730585.397208',
-                'Wetlands_1_20231107_1699472081.0077796',
-                'Wetlands_2_20231107_1699427262.9916897',
-                'Wetlands_Rip_20231113_1699902696.01962'
-            ];
-
-            MAPRIGHT_WETLAND_LAYERS.forEach((srcLayerId, idx) => {
-                const layerId = `wetlands_mapright_${idx}`;
-                if (!map.getLayer(layerId)) {
-                    map.addLayer({
-                        id: layerId,
-                        type: 'fill',
-                        source: 'wetlands_mapright',
-                        'source-layer': srcLayerId,
-                        paint: {
-                            'fill-color': '#3b82f6',
-                            'fill-opacity': 0.35
-                        },
-                        layout: { 'visibility': 'none' }
-                    }, 'd_wet');
-                }
+            SnapshotSDK.getMapRightWetlandLayerDefs().forEach(def => {
+                SnapshotSDK.ensureLayer(map, def, 'd_wet');
             });
             
             // NFHL Flood layer (default hidden)
-            if (!map.getLayer('nfhl_flood')) {
-                map.addLayer({
-                    id: 'nfhl_flood',
-                    type: 'fill',
-                    source: 'nfhl_flood',
-                    paint: {
-                        'fill-color': '#fb923c',
-                        'fill-opacity': 0.4
-                    },
-                    layout: { 'visibility': 'none' }
+            SnapshotSDK.ensureLayer(map, {
+                id: nfhlOverlay.layerId,
+                type: 'fill',
+                source: nfhlOverlay.sourceId,
+                paint: nfhlOverlay.style.paint,
+                layout: nfhlOverlay.style.layout
+            });
+
+            if (nfhlCache.features.length && map.getSource(nfhlOverlay.sourceId)) {
+                map.getSource(nfhlOverlay.sourceId).setData({
+                    type: 'FeatureCollection',
+                    features: nfhlCache.features
                 });
             }
         }
-
         function restoreAnalysisData() {
             if (!currentData) return;
 
@@ -927,25 +882,11 @@
         let currentData = null;
         let currentTab = 'infra';
         let currentMarker = null;
-
-        const SERVICE_URLS = {
-            wetlands: 'https://fwspublicservices.wim.usgs.gov/wetlandsmapservice/rest/services/Wetlands/MapServer/0/query',
-            flood: 'https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/USA_Flood_Hazard_Reduced_Set_gdb/FeatureServer/0/query',
-            nfhl_flood: 'https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query',
-            protected: 'https://services.arcgis.com/v01gqwM5QqNysAAi/arcgis/rest/services/Manager_Name/FeatureServer/0/query',
-            crithab_final_poly: 'https://services.arcgis.com/QVENGdaPbd4LUkLV/ArcGIS/rest/services/USFWS_Critical_Habitat/FeatureServer/0/query',
-            crithab_final_line: 'https://services.arcgis.com/QVENGdaPbd4LUkLV/ArcGIS/rest/services/USFWS_Critical_Habitat/FeatureServer/1/query',
-            crithab_proposed_poly: 'https://services.arcgis.com/QVENGdaPbd4LUkLV/ArcGIS/rest/services/USFWS_Critical_Habitat/FeatureServer/2/query',
-            crithab_proposed_line: 'https://services.arcgis.com/QVENGdaPbd4LUkLV/ArcGIS/rest/services/USFWS_Critical_Habitat/FeatureServer/3/query',
-            trans: 'https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/US_Electric_Power_Transmission_Lines/FeatureServer/0/query',
-            subs: 'https://services6.arcgis.com/OO2s4OoyCZkYJ6oE/arcgis/rest/services/Substations/FeatureServer/0/query',
-            pipe: 'https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/Natural_Gas_Interstate_and_Intrastate_Pipelines_1/FeatureServer/0/query',
-            // FEMA National Risk Index - Census Tract level (more granular than county)
-            nri: 'https://services.arcgis.com/XG15cJAlne2vxtgt/arcgis/rest/services/National_Risk_Index_Census_Tracts/FeatureServer/0/query'
-        };
-
+        let nfhlCache = { bbox: null, features: [] };
+        const SERVICE_URLS = SnapshotSDK.datasets;
         const NREL_API_KEY = 'zXdbmYJ49pr7aQkN1WktVYVPASCDQRQZykTFa3pd';
-        const USDA_SDA_ENDPOINT = 'https://sdmdataaccess.nrcs.usda.gov/Tabular/SDMTabularService/post.rest';
+        const USDA_SDA_ENDPOINT = SnapshotSDK.endpoints?.sdaTabular || 'https://sdmdataaccess.nrcs.usda.gov/Tabular/SDMTabularService/post.rest';
+        const NLCD_IDENTIFY_URL = SnapshotSDK.endpoints?.nlcdIdentify || 'https://sampleserver6.arcgisonline.com/arcgis/rest/services/NLCDLandCover2001/ImageServer/identify';
 
         // Fatal flaw definitions
         const FATAL_FLOOD_ZONES = ['A', 'AE', 'AH', 'AO', 'V', 'VE', 'AR'];
@@ -1026,7 +967,7 @@
         });
 
         document.querySelectorAll('.layer-toggle').forEach(t => {
-            t.addEventListener('click', () => {
+            t.addEventListener('click', async () => {
                 const cb = t.querySelector('.layer-checkbox');
                 const isBasemapToggle = t.dataset.layer === 'basemap';
 
@@ -1042,29 +983,20 @@
 
                 cb.classList.toggle('checked');
                 const layerName = t.dataset.layer;
+                const isVisible = cb.classList.contains('checked');
                 
                 // Handle the new layers
                 if (layerName === 'wetlands_mapright') {
-                    // Toggle all 8 wetlands_mapright layers
-                    const visibility = cb.classList.contains('checked') ? 'visible' : 'none';
-                    for (let i = 0; i < 8; i++) {
-                        const lyrId = `wetlands_mapright_${i}`;
-                        if (map.getLayer(lyrId)) {
-                            map.setLayoutProperty(lyrId, 'visibility', visibility);
-                        }
-                    }
+                    SnapshotSDK.setLayerVisibility(map, SnapshotSDK.getMapRightWetlandLayerIds(), isVisible);
                 } else if (layerName === 'nflood_floodzones') {
-                    if (map.getLayer('nflood_floodzones')) {
-                        map.setLayoutProperty('nflood_floodzones', 'visibility', 
-                            cb.classList.contains('checked') ? 'visible' : 'none');
+                    SnapshotSDK.setLayerVisibility(map, SnapshotSDK.getNFDFOverlay().layerId, isVisible);
+                } else if (layerName === 'nfhl_fema') {
+                    if (isVisible) {
+                        await loadNFHLIfNeeded();
                     }
-                } else if (layerName === 'nfhl_flood') {
-                    if (map.getLayer('nfhl_flood')) {
-                        map.setLayoutProperty('nfhl_flood', 'visibility', 
-                            cb.classList.contains('checked') ? 'visible' : 'none');
-                    }
+                    SnapshotSDK.setLayerVisibility(map, SnapshotSDK.getNFHLOverlay().layerId, isVisible);
                 } else if (layerName === 'crithab_final') {
-                    const visibility = cb.classList.contains('checked') ? 'visible' : 'none';
+                    const visibility = isVisible ? 'visible' : 'none';
                     if (map.getLayer('d_crithab_final')) {
                         map.setLayoutProperty('d_crithab_final', 'visibility', visibility);
                     }
@@ -1072,7 +1004,7 @@
                         map.setLayoutProperty('d_crithab_final_line', 'visibility', visibility);
                     }
                 } else if (layerName === 'crithab_proposed') {
-                    const visibility = cb.classList.contains('checked') ? 'visible' : 'none';
+                    const visibility = isVisible ? 'visible' : 'none';
                     if (map.getLayer('d_crithab_proposed')) {
                         map.setLayoutProperty('d_crithab_proposed', 'visibility', visibility);
                     }
@@ -1092,7 +1024,7 @@
                     
                     if(mapLyrId && map.getLayer(mapLyrId)) {
                         map.setLayoutProperty(mapLyrId, 'visibility', 
-                            cb.classList.contains('checked') ? 'visible' : 'none');
+                            isVisible ? 'visible' : 'none');
                     }
                 }
             });
@@ -1122,6 +1054,51 @@
                 return turf.bboxPolygon(bbox);
             }
             return turf.circle(pt, radiusMiles, {units: 'miles'});
+        }
+
+        function bboxChanged(prev, next, tol = 0.0001) {
+            if (!prev) return true;
+            if (!next) return true;
+            return prev.some((v, i) => Math.abs(v - next[i]) > tol);
+        }
+
+        function getNFHLBBox() {
+            if (lastCoords) {
+                const envBuffer = createBufferFeature([lastCoords.lng, lastCoords.lat], radEnv, bufferShape);
+                return turf.bbox(envBuffer);
+            }
+            const b = map.getBounds();
+            return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+        }
+
+        async function loadNFHLIfNeeded() {
+            const overlay = SnapshotSDK.getNFHLOverlay();
+            const bbox = getNFHLBBox();
+            if (nfhlCache.bbox && !bboxChanged(nfhlCache.bbox, bbox)) {
+                if (map.getSource(overlay.sourceId)) {
+                    map.getSource(overlay.sourceId).setData({
+                        type: 'FeatureCollection',
+                        features: nfhlCache.features
+                    });
+                }
+                return nfhlCache.features;
+            }
+
+            try {
+                const features = await SnapshotSDK.fetchNFHL(bbox);
+                nfhlCache = { bbox, features: features || [] };
+            } catch (e) {
+                nfhlCache = { bbox, features: [] };
+                console.warn('NFHL fetch failed', e);
+            }
+
+            if (map.getSource(overlay.sourceId)) {
+                map.getSource(overlay.sourceId).setData({
+                    type: 'FeatureCollection',
+                    features: nfhlCache.features
+                });
+            }
+            return nfhlCache.features;
         }
 
         // === SEARCH & ANALYSIS ===
@@ -1167,19 +1144,18 @@
                 const bboxInf = turf.bbox(buffInfra);
                 
                 // Initial query with user-selected buffer
-                let [wet, flood, prot, land, trans, sub, pipe, nfhlFlood, crithabFinalPoly, crithabFinalLine, crithabProposedPoly, crithabProposedLine, solarData, nriData, soilsData] = await Promise.all([
-                    queryEsri(SERVICE_URLS.wetlands, bboxEnv),
-                    queryEsri(SERVICE_URLS.flood, bboxEnv),
-                    queryEsri(SERVICE_URLS.protected, bboxEnv),
+                let [wet, flood, prot, land, trans, sub, pipe, crithabFinalPoly, crithabFinalLine, crithabProposedPoly, crithabProposedLine, solarData, nriData, soilsData] = await Promise.all([
+                    SnapshotSDK.esriQueryGeoJSON(SERVICE_URLS.wetlands, bboxEnv),
+                    SnapshotSDK.esriQueryGeoJSON(SERVICE_URLS.flood, bboxEnv),
+                    SnapshotSDK.esriQueryGeoJSON(SERVICE_URLS.protected, bboxEnv),
                     sampleNLCD(lng, lat),
-                    queryEsri(SERVICE_URLS.trans, bboxInf),
-                    queryEsri(SERVICE_URLS.subs, bboxInf),
-                    queryEsri(SERVICE_URLS.pipe, bboxInf),
-                    queryEsri(SERVICE_URLS.nfhl_flood, bboxEnv),
-                    queryEsri(SERVICE_URLS.crithab_final_poly, bboxEnv),
-                    queryEsri(SERVICE_URLS.crithab_final_line, bboxEnv),
-                    queryEsri(SERVICE_URLS.crithab_proposed_poly, bboxEnv),
-                    queryEsri(SERVICE_URLS.crithab_proposed_line, bboxEnv),
+                    SnapshotSDK.esriQueryGeoJSON(SERVICE_URLS.trans, bboxInf),
+                    SnapshotSDK.esriQueryGeoJSON(SERVICE_URLS.subs, bboxInf),
+                    SnapshotSDK.esriQueryGeoJSON(SERVICE_URLS.pipe, bboxInf),
+                    SnapshotSDK.esriQueryGeoJSON(SERVICE_URLS.crithab_final_poly, bboxEnv),
+                    SnapshotSDK.esriQueryGeoJSON(SERVICE_URLS.crithab_final_line, bboxEnv),
+                    SnapshotSDK.esriQueryGeoJSON(SERVICE_URLS.crithab_proposed_poly, bboxEnv),
+                    SnapshotSDK.esriQueryGeoJSON(SERVICE_URLS.crithab_proposed_line, bboxEnv),
                     querySolarResource(lng, lat),
                     queryNRI(lng, lat),
                     querySoils(lng, lat)
@@ -1193,12 +1169,12 @@
                     
                     if(trans.length === 0) {
                         console.log(`No transmission in ${radInfra}mi buffer, expanding search to ${EXPANDED_INFRA_RADIUS}mi...`);
-                        trans = await queryEsri(SERVICE_URLS.trans, bboxExpanded);
+                        trans = await SnapshotSDK.esriQueryGeoJSON(SERVICE_URLS.trans, bboxExpanded);
                         if(trans.length > 0) expandedSearchUsed = true;
                     }
                     if(sub.length === 0) {
                         console.log(`No substations in ${radInfra}mi buffer, expanding search to ${EXPANDED_INFRA_RADIUS}mi...`);
-                        sub = await queryEsri(SERVICE_URLS.subs, bboxExpanded);
+                        sub = await SnapshotSDK.esriQueryGeoJSON(SERVICE_URLS.subs, bboxExpanded);
                         if(sub.length > 0) expandedSearchUsed = true;
                     }
                 }
@@ -1282,11 +1258,15 @@
                 map.getSource('lyr_trans').setData({type:'FeatureCollection', features: currentData.infra.transInBuffer});
                 map.getSource('lyr_sub').setData({type:'FeatureCollection', features: currentData.infra.subsInBuffer});
                 map.getSource('lyr_pipe').setData({type:'FeatureCollection', features: currentData.infra.pipe});
-                
-                // Update NFHL flood source
-                const nfhlFiltered = nfhlFlood.filter(f => safeIntersects(f, buffEnv));
-                map.getSource('nfhl_flood').setData({type:'FeatureCollection', features: nfhlFiltered});
 
+                const nfhlToggle = document.querySelector('.layer-toggle[data-layer="nfhl_fema"] .layer-checkbox');
+                if (nfhlToggle && nfhlToggle.classList.contains('checked')) {
+                    await loadNFHLIfNeeded();
+                    SnapshotSDK.setLayerVisibility(map, SnapshotSDK.getNFHLOverlay().layerId, true);
+                } else {
+                    SnapshotSDK.setLayerVisibility(map, SnapshotSDK.getNFHLOverlay().layerId, false);
+                }
+                
                 updateStats();
                 renderResultsList();
                 
@@ -1302,31 +1282,14 @@
             }
         }
 
-        async function queryEsri(url, bbox) {
-            const params = new URLSearchParams({
-                f: 'geojson', returnGeometry: 'true', outFields: '*', spatialRel: 'esriSpatialRelIntersects',
-                geometry: JSON.stringify({xmin:bbox[0], ymin:bbox[1], xmax:bbox[2], ymax:bbox[3], spatialReference:{wkid:4326}}),
-                geometryType: 'esriGeometryEnvelope'
-            });
-            try {
-                const r = await fetch(`${url}?${params}`);
-                if(!r.ok) return [];
-                const d = await r.json();
-                return d.features || [];
-            } catch { return []; }
-        }
-
         async function sampleNLCD(lng, lat) {
-            const url = 'https://sampleserver6.arcgisonline.com/arcgis/rest/services/NLCDLandCover2001/ImageServer/identify';
-            const params = new URLSearchParams({
-                f: 'json', geometryType: 'esriGeometryPoint', returnGeometry: 'false',
-                geometry: JSON.stringify({x:lng, y:lat, spatialReference:{wkid:4326}})
-            });
             try {
-                const r = await fetch(`${url}?${params}`);
-                const d = await r.json();
-                return NLCD_CLASSES[d.value] || "Unknown";
-            } catch { return "Unknown"; }
+                const d = await SnapshotSDK.sampleEsriImageServerIdentify(NLCD_IDENTIFY_URL, lng, lat);
+                if (d && typeof d.value !== 'undefined') {
+                    return SnapshotSDK.classifyNLCD(d.value, NLCD_CLASSES);
+                }
+            } catch(e) {}
+            return "Unknown";
         }
 
         // Query NREL Solar Resource API - fast endpoint for UI display
